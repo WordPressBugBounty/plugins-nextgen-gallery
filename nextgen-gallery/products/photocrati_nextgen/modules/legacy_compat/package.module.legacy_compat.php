@@ -2077,9 +2077,24 @@ class C_Gallery_Storage extends C_Component
                     $try_image_magick = false;
                 }
                 if ($try_image_magick && extension_loaded('imagick') && class_exists('Imagick')) {
-                    $img = new Imagick($image_path);
-                    if (method_exists($img, 'getImageCompressionQuality')) {
-                        $possible_quality = $img->getImageCompressionQuality();
+                    try {
+                        $img = new Imagick($image_path);
+                        if (method_exists($img, 'getImageCompressionQuality')) {
+                            $possible_quality = $img->getImageCompressionQuality();
+                        }
+                        // Clean up the Imagick object
+                        if (isset($img)) {
+                            $img->clear();
+                            $img->destroy();
+                        }
+                    } catch (ImagickException $e) {
+                        // ImageMagick doesn't support this image format, fall back to GD calculation
+                        error_log('NextGEN Gallery: ImageMagick JPEG support not available, falling back to GD: ' . $e->getMessage());
+                        $try_image_magick = false;
+                    } catch (Exception $e) {
+                        // Any other ImageMagick error, fall back to GD calculation
+                        error_log('NextGEN Gallery: ImageMagick error, falling back to GD: ' . $e->getMessage());
+                        $try_image_magick = false;
                     }
                 }
                 // ImageMagick wasn't available or quality is zero so we guess it from the dimensions and filesize
@@ -2112,7 +2127,7 @@ class C_Gallery_Storage extends C_Component
                     $width = $dst_w;
                     $height = $dst_h;
                 } else {
-                    $result['error'] = new WP_Error('error_getting_dimensions', __('Could not calculate resized image dimensions'));
+                    $result['error'] = new WP_Error('error_getting_dimensions', __('Could not calculate resized image dimensions', 'nggallery'));
                 }
             } else {
                 $result['method'] = 'nextgen';
@@ -3351,7 +3366,7 @@ class C_Gallery_Storage extends C_Component
                 if (($dimensions = getimagesize($new_image_abspath)) !== false) {
                     if (isset($dimensions[0]) && intval($dimensions[0]) > 30000 || isset($dimensions[1]) && intval($dimensions[1]) > 30000) {
                         unlink($new_image_abspath);
-                        throw new E_UploadException(__('Image file too large. Maximum image dimensions supported are 30k x 30k.'));
+                        throw new E_UploadException(__('Image file too large. Maximum image dimensions supported are 30k x 30k.', 'nggallery'));
                     }
                 }
             }
@@ -3378,7 +3393,7 @@ class C_Gallery_Storage extends C_Component
                         if (!empty($exception)) {
                             $exception .= '<br/>';
                         }
-                        $exception .= __(sprintf('Error while uploading %s: %s', $filename, $error), 'nextgen-gallery');
+                        $exception .= __(sprintf('Error while uploading %s: %s', $filename, $error), 'nggallery');
                     }
                 }
                 throw new E_UploadException($exception);
@@ -4713,7 +4728,23 @@ class Mixin_GalleryStorage_Base_Dynamic extends Mixin
             // Generate the thumbnail using WordPress
             $existing_image_abpath = $this->object->get_image_abspath($image, $size);
             $existing_image_dir = dirname($existing_image_abpath);
-            wp_mkdir_p($existing_image_dir);
+            // Ensure directory exists with proper error handling
+            if (!wp_mkdir_p($existing_image_dir)) {
+                // Fallback: try to create directory with different permissions
+                if (!@mkdir($existing_image_dir, 0755, true)) {
+                    error_log('NextGEN Gallery: Failed to create thumbnail directory: ' . $existing_image_dir);
+                    return false;
+                }
+            }
+            // Verify directory is writable
+            if (!is_writable($existing_image_dir)) {
+                // Try to fix permissions
+                @chmod($existing_image_dir, 0755);
+                if (!is_writable($existing_image_dir)) {
+                    error_log('NextGEN Gallery: Thumbnail directory not writable: ' . $existing_image_dir);
+                    return false;
+                }
+            }
             $clone_path = $existing_image_abpath;
             $thumbnail = $this->object->generate_image_clone($filename, $clone_path, $params);
             // We successfully generated the thumbnail

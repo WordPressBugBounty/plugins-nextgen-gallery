@@ -2,10 +2,10 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 3.59.12
-Tested up to: 6.8
+Stable tag: 4.0.4
+Tested up to: 6.9
 License: GPLv3
-Requires PHP: 7.0
+Requires PHP: 7.4
 
 The most popular gallery plugin that lets you create galleries and albums in seconds.
 
@@ -196,6 +196,31 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= v4.0.3 - 12.18.2025 =
+• Added: REST endpoint to scan a gallery folder and import newly added images, and a client hook to trigger it.
+• Added: legacy template selector and exposed available legacy templates to the admin app.
+• Added: shared Pagination component and applied it across admin list screens (galleries, albums, tags, orders).
+• Added: Image ID field to the image metadata modal.
+• Added: Digital Downloads section in order details with a direct download link.
+• Fixed: 403 rate-limiting issues by debouncing display/settings saves (longer debounce) in gallery/album customize flows.
+• Fixed: legacy template loading security by blocking traversal attempts and only allowing templates from approved directories
+• Fixed: Upgrade menu item and related admin styles/targeting to show only for Lite installs.
+• Fixed: duplicate-column errors when adding DB columns by checking column existence directly
+• Fixed: order resubmission-to-lab flow (improved success/error handling) and improved order item file details display.
+• Fixed: missing UTM parameters in upgrade links.
+
+= V4.0.2 - 12.15.2025 =
+* Fixed: Missing thumbnails on the gallery edit page for some users
+* Fixed: Creating galleries from server subfolders
+* Fixed: User and capabilities page showing for all users
+
+= V4.0.1 - 12.10.2025 =
+* Fixed: Edit gallery user permissions
+
+= V4.0.0 - 12.09.2025 =
+* Improved: Admin area user interface
+
 = V3.59.12 - 04.23.2025 =
 * Fixed: Lightbox allowed html discrepancy
 
@@ -285,59 +310,3 @@ For more information, feel free to visit the official website for the NextGEN Ga
 * Fixed:   Router->fix_page_parameter() generated a warning if the global $post is not an object.
 * Fixed:   The button 'Scan folder for new images' was re-importing existing images.
 * Fixed:   Updating tags via the Manage Tags page did not flush the displayed gallery rendering cache.
-
-= V3.55  - 12.13.2023 =
-* Changed: Changing SweetAlert library version to prevent the interference on .ru sites.
-
-= V3.54  - 12.01.2023 =
-* Fixed:   Assorted possible PHP warnings and notices with PHP 8.0+.
-* Fixed:   Compatibility with some 3rd party extensions.
-
-= V3.53  - 11.30.2023 =
-* Fixed:   A potential conflict with NextGEN Pro Lightbox.
-
-= V3.52  - 11.30.2023 =
-* Fixed:   A potential fatal error caused by accessing NextGEN Pro constants before they are defined.
-* Fixed:   Compatibility with ARI Fancy Lightbox & Imagify, both could generate a fatal exception since 3.50.
-* Fixed:   Paths to non-default template files were being calculated incorrectly, causing the incorrect template to display.
-* Fixed:   Some bulk actions in the Manage Gallery page were broken by the last release.
-* Fixed:   Users of PHP 7 and WordPress 5.8 or older could experience a fatal error due to the use of str_contains().
-
-= V3.50  - 11.29.2023 =
-* IMPORTANT: Support for PHP 5.6 and lower has been discontinued. If you are running PHP 5.6 or lower, you MUST upgrade PHP before installing NextGEN 3.5.0. Failure to do that will disable NextGEN core functionality.
-* Updated: Major refactor of the plugin to support future improvements! Note: This release Requires at least PHP 7.0.
-* Fixed:   We closed some issues affecting Lightroom users
-
-= V3.41  - 09.27.2023 =
-* Fixed:   NextGEN 3.39 could generate a fatal error when viewing a gallery hosted on IIS.
-* Fixed:   NextGEN 3.39 could not accept uploads from the LightRoom plugin.
-* Fixed:   NextGEN 3.39 could generate a PHP exception when using custom template paths.
-
-= V3.39  - 09.13.2023 =
-* Fixed:   Prevent template files from existing outside of the site document root, WP_CONTENT_DIR, or WP_PLUGIN_DIR
-
-= V3.37  - 05.05.2023 =
-* Fixed:   A fatal error was thrown when uploading images' whose 'Flash' EXIF field is an array instead of the integer it should be.
-* Fixed:   Correcting a possible error in our RankMath SEO compatibility.
-* Fixed:   Prevent duplicate entries from being added to the photocrati_cache_tracker transient.
-
-= V3.36  - 05.10.2023 =
-* NEW:     Added support for WP-Sweep so that NextGEN's tags will not be automatically removed.
-* NEW:     Added NextGEN Gallery images to RankMath SEO's sitemaps.
-* Fixed:   A JS error could trigger on the Manage Gallery page in some circumstances.
-* Fixed:   In some specific situations NextGEN Gallery could cause an infinite loop on all pages.
-* Fixed:   Manage Gallery's "Add Page" button used the legacy [nggallery] shortcode.
-
-= V3.35  - 02.03.2023 =
-* Fixed:   Sites still using PHP 5.6 experience a fatal error due to an incompatibility with the latest version of Composer.
-
-= V3.34  - 02.02.2023 =
-* Fixed:   FontAwesome could load SVG font files which broke some Pro Lightbox elements.
-
-= V3.33  - 01.18.2023 =
-* Fixed:   FontAwesome icons were broken by 3.32 if not enqueued by another source.
-
-= V3.32  - 01.11.2023 =
-* NEW:     Added the filter 'ngg_metadata_parse_order'
-* Changed: Now including all CSS & JS resources inside the plugin to avoid GDPR issues.
-* Fixed:   Viewing sub-albums could result in a PHP warning regarding array_pop()

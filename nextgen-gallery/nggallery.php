@@ -2,7 +2,7 @@
 /**
  * Plugin Name: NextGEN Gallery
  * Description: The most popular gallery plugin for WordPress and one of the most popular plugins of all time with over 30 million downloads.
- * Version: 3.59.12
+ * Version: 4.0.4
  * Author: Imagely
  * Plugin URI: https://www.imagely.com/wordpress-gallery-plugin/nextgen-gallery/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=pluginuri
  * Author URI: https://www.imagely.com/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=authoruri
@@ -23,7 +23,10 @@ use Imagely\NGG\Admin\AMNotifications;
 use Imagely\NGG\Admin\About;
 use Imagely\NGG\Admin\MenuNudge;
 use Imagely\NGG\Admin\Ecommerce_Preview;
+use Imagely\NGG\Admin\Shortcode_Preview;
 use Imagely\NGG\Admin\Onboarding_Wizard;
+use Imagely\NGG\Admin\App;
+use Imagely\NGG\Migrations\AddGalleryDates;
 
 /**
  * @deprecated
@@ -158,7 +161,11 @@ class C_NextGEN_Bootstrap {
 				( new About() )->hooks();
 				( new MenuNudge() )->hooks();
 				( new Ecommerce_Preview() )->hooks();
+				AddGalleryDates::migrate( false );
 			}
+			// TODO maybe move back to only admin after all is done.
+			( new App() )->hooks();
+      Shortcode_Preview::hooks();
 
 			$this->load_pope();
 
@@ -539,6 +546,12 @@ class C_NextGEN_Bootstrap {
 		// We allow POPE to load if the requested URL/POST includes photocrati_ajax as it is still used by a few NextGEN
 		// modules for XHR such as uploading images.
 		//
+		// Third-party image optimization plugins that require legacy C_Gallery_Storage class access:
+		// - EWWW Image Optimizer: uses I_Gallery_Storage interface
+		// - WP Smush: uses I_Gallery_Storage interface
+		// - Imagify: adds their own mixin to C_Gallery_Storage
+		// - ShortPixel: uses C_Gallery_Storage (detected via SHORTPIXEL_IMAGE_OPTIMISER_VERSION)
+		//
 		// Nonce verification is not necessary here.
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		if ( ! $force
@@ -547,6 +560,7 @@ class C_NextGEN_Bootstrap {
 			&& ! defined( 'EWWW_IMAGE_OPTIMIZER_VERSION' ) // EWWW uses I_Gallery_Storage.
 			&& ! defined( 'WP_SMUSH_VERSION' ) // WP_SMUSH_VERSION uses I_Gallery_Storage.
 			&& ! defined( 'IMAGIFY_VERSION' ) // Imagify adds their own mixin to C_Gallery_Storage.
+			&& ! defined( 'SHORTPIXEL_IMAGE_OPTIMISER_VERSION' ) // ShortPixel uses C_Gallery_Storage.
 			|| self::$pope_loaded ) {
 			return;
 		}
@@ -648,9 +662,9 @@ class C_NextGEN_Bootstrap {
 		print $account_msg;
 
 		if ( version_compare( $wp_version, '5.5', '>=' ) && version_compare( $wp_version, '5.5.9', '<=' ) ) {
-			$note = __( "NOTE: The autoupdater doesn't work on the version of WordPress you have installed.", 'ngallery' );
+			$note = __( "NOTE: The autoupdater doesn't work on the version of WordPress you have installed.", 'nggallery' );
 			print "<div style='font-weight: bold;'>";
-			print $note;
+			print esc_html( $note );
 			print '</div>';
 		}
 		print '</p></div>';
@@ -837,7 +851,7 @@ class C_NextGEN_Bootstrap {
 			} else {
 				// Existing install.
 				update_option( 'ngg_wizard', 'no' );
-				wp_safe_redirect( admin_url( '/admin.php?page=nextgen-gallery' ) );
+				wp_safe_redirect( admin_url( '/admin.php?page=imagely&tab=general' ) );
 			}
 			delete_transient( 'ngg-activated' );
 			exit;
@@ -984,7 +998,7 @@ class C_NextGEN_Bootstrap {
 		define( 'NGG_PRODUCT_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PLUGIN_DIR, '/\\' ), 'products' ] ) );
 		define( 'NGG_MODULE_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PRODUCT_DIR, '/\\' ), 'photocrati_nextgen', 'modules' ] ) );
 		define( 'NGG_PLUGIN_STARTED_AT', microtime() );
-		define( 'NGG_PLUGIN_VERSION', '3.59.12' );
+		define( 'NGG_PLUGIN_VERSION', '4.0.4' );
 
 		define( 'NGG_SCRIPT_VERSION', defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? (string) mt_rand( 0, mt_getrandmax() ) : NGG_PLUGIN_VERSION );
 

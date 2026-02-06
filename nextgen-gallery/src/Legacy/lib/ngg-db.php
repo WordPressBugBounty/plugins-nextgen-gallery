@@ -147,7 +147,8 @@ class nggdb {
 	function delete_gallery( $id ) {
 		$mapper  = \Imagely\NGG\DataMappers\Gallery::get_instance();
 		$gallery = $mapper->find( $id );
-		$mapper->destroy( $gallery );
+		// Always delete with dependencies to prevent orphaned image records
+		$mapper->destroy( $gallery, true );
 		wp_cache_delete( $id, 'ngg_gallery' );
 
 		return true;
