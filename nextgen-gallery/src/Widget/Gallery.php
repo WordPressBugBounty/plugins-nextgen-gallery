@@ -25,6 +25,10 @@ class Gallery extends \WP_Widget {
 
 		parent::__construct( 'ngg-images', \__( 'NextGEN Widget', 'nggallery' ), $widget_ops );
 
+		// Add templates directory to legacy template locator so Widget templates can be found.
+		// The regex in LegacyTemplateLocator is case-sensitive, so View-based templates like
+		// Widget/Display/Gallery.php won't appear in the legacy template dropdown (they use
+		// uppercase naming, while legacy templates use lowercase like gallery.php).
 		\add_filter(
 			'ngg_legacy_template_directories',
 			function ( $dirs ) {

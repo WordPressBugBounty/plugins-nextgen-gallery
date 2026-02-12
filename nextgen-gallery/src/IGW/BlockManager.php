@@ -38,6 +38,7 @@ class BlockManager {
 	public function register_hooks() {
 		add_action( 'init', [ $this, 'register_blocks' ] );
 		add_action( 'enqueue_block_editor_assets', [ $this, 'enqueue_post_thumbnails' ], 1 );
+		add_action( 'enqueue_block_editor_assets', [ $this, 'enqueue_gallery_conversion' ], 10 );
 		add_action( 'enqueue_block_assets', [ $this, 'ngg_enqueue_block_assets' ] );
 
 		// Adds NextGEN thumbnail support to all posts with 'thumbnail' support by adding a field for posts/pages to
@@ -248,6 +249,53 @@ class BlockManager {
 			// Was it added?
 			$storage->set_post_thumbnail( $post->ID, $target->ngg_post_thumbnail );
 		}
+	}
+
+	/**
+	 * Enqueue the gallery conversion script.
+	 *
+	 * This script extends the WordPress Gallery block with a "Convert to Imagely" button.
+	 *
+	 * @return void
+	 */
+	public function enqueue_gallery_conversion() {
+		$asset_file = NGG_PLUGIN_DIR . '/static/IGW/Block/build/gallery-conversion.asset.php';
+		$asset      = file_exists( $asset_file ) ? include $asset_file : [ 'dependencies' => [], 'version' => NGG_SCRIPT_VERSION ];
+
+		\wp_enqueue_script(
+			'imagely-gallery-conversion',
+			StaticAssets::get_url( 'IGW/Block/build/gallery-conversion.min.js', 'photocrati-nextgen_block#build/gallery-conversion.min.js' ),
+			$asset['dependencies'],
+			$asset['version'],
+			true
+		);
+
+		// Localize script with conversion data.
+		\wp_localize_script(
+			'imagely-gallery-conversion',
+			'imagelyConvertData',
+			[
+				'convertApiUrl'       => '/imagely/v1/convert-gallery/single',
+				'convertRestNonce'    => \wp_create_nonce( 'wp_rest' ),
+				'postId'              => \get_the_ID(),
+				'panelTitle'          => \__( 'Imagely Gallery', 'nggallery' ),
+				'contentHeading'      => \__( 'Convert to Imagely', 'nggallery' ),
+				'contentDescription'  => \__( 'Convert this WordPress Gallery to an Imagely Gallery for more features and customization options.', 'nggallery' ),
+				'contentButtonText'   => \__( 'Convert to Imagely Gallery', 'nggallery' ),
+				'convertLoading'      => \__( 'Converting...', 'nggallery' ),
+				'confirmationMessage' => \__( 'Are you sure you want to convert this WordPress Gallery to an Imagely Gallery? This action cannot be undone.', 'nggallery' ),
+				'invalidBlockMessage' => \__( 'Invalid block. Please select a WordPress Gallery block.', 'nggallery' ),
+				'noImagesMessage'     => \__( 'No images found in the gallery. Please add images before converting.', 'nggallery' ),
+				'errorMessage'        => \__( 'An error occurred while converting the gallery.', 'nggallery' ),
+			]
+		);
+
+		// Load translations for the gallery conversion script.
+		\wp_set_script_translations(
+			'imagely-gallery-conversion',
+			'nggallery',
+			NGG_PLUGIN_DIR . 'static/I18N'
+		);
 	}
 
 	/**

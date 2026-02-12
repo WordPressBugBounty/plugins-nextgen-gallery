@@ -190,8 +190,8 @@ class nggdb {
 			}
 
 			// it was a bad idea to use a object, stripslashes_deep() could not used here, learn from it
-			$album->albumdesc = stripslashes( $album->albumdesc );
-			$album->name      = stripslashes( $album->name );
+			$album->albumdesc = stripslashes( $album->albumdesc ?? '' );
+			$album->name      = stripslashes( $album->name ?? '' );
 
 			wp_cache_add( $album->id, $album, 'ngg_album' );
 			return $album;

@@ -4,6 +4,7 @@
  * This plugin:
  * 1. Adds @wordpress/babel-plugin-makepot to the babel-loader configuration
  * 2. Post-processes the generated POT file to replace TypeScript source paths with JS build paths
+ * 3. Ensures temp files are always cleaned up, even on errors
  */
 
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS required for webpack plugins */
@@ -19,7 +20,26 @@ class MakepotPlugin {
 		};
 	}
 
+	/**
+	 * Safely delete a file if it exists
+	 * @param {string} filePath - Path to file to delete
+	 */
+	safeUnlink(filePath) {
+		try {
+			if (fs.existsSync(filePath)) {
+				fs.unlinkSync(filePath);
+			}
+		} catch (error) {
+			console.warn(`[MakepotPlugin] Could not delete temp file ${filePath}:`, error.message);
+		}
+	}
+
 	apply(compiler) {
+		// Clean up any leftover temp files at the start
+		compiler.hooks.beforeCompile.tap('MakepotPlugin', () => {
+			this.safeUnlink(this.options.tempOutput);
+		});
+
 		// Add @wordpress/babel-plugin-makepot to babel-loader
 		compiler.hooks.afterPlugins.tap('MakepotPlugin', () => {
 			const rules = compiler.options.module.rules;
@@ -54,14 +74,20 @@ class MakepotPlugin {
 					.replace(/#: src\/[^\s]+\.tsx?:(\d+)/g, `#: ${this.options.scriptPath}:$1`);
 
 				fs.writeFileSync(this.options.output, potContent, 'utf8');
-				fs.unlinkSync(this.options.tempOutput);
-
 				console.warn(`[MakepotPlugin] Generated: ${this.options.output}`);
 			} catch (error) {
-				console.error(`[MakepotPlugin] Error:`, error);
+				console.error(`[MakepotPlugin] Error processing POT file:`, error);
+			} finally {
+				// Always clean up temp file, even on error
+				this.safeUnlink(this.options.tempOutput);
 			}
 
 			callback();
+		});
+
+		// Clean up temp files on failed compilation
+		compiler.hooks.failed.tap('MakepotPlugin', () => {
+			this.safeUnlink(this.options.tempOutput);
 		});
 	}
 }
