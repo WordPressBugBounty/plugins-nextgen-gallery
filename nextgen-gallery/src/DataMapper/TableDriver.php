@@ -308,6 +308,14 @@ class TableDriver extends DriverBase {
 	}
 
 	/**
+	 * {@inheritdoc}
+	 */
+	public function where_raw( $sql ) {
+		$this->where_clauses[] = $sql;
+		return $this;
+	}
+
+	/**
 	 * Returns the total number of entities known
 	 *
 	 * @return int

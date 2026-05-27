@@ -1,6 +1,17 @@
 NextGEN Gallery
 by Imagely
 
+= V4.2.2 - 05.19.2026 =
+* Added: Google Photos integration — import images directly from your Google Photos account into NextGEN galleries.
+* Added: Dropbox integration — import images from Dropbox into NextGEN galleries.
+* Fixed: Multisite subsite admins can no longer change the gallery base path (Path to galleries is now read-only for non-super-admins).
+* Fixed: Network super-admin toggle "Allow users to import image folders from the server" now correctly gates the Import Folder feature on subsites.
+
+= V4.1.2 - TBD =
+* Fixed:   Multisite subsite site admins see Path to galleries read-only in Imagely; main site and network super admins may still edit.
+* Fixed:   Multisite network "Enable import function" gates Import Folder for subsites (UI and REST).
+* Improved: Shared gallery path validation (REST and classic Image Options).
+
 = V4.1.1 - 03.13.2025 =
 * Fixed: PNG and WEBP watermarks no longer lose transparency when applied to images.
 * Fixed: Fatal error when using NextGen Gallery with older Pro add-on versions that reference the legacy C_NextGen_Settings class.

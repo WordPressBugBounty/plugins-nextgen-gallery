@@ -82,6 +82,26 @@ abstract class DriverBase {
 	abstract public function select( $fields = null );
 
 	/**
+	 * Appends a raw SQL fragment directly to the WHERE clause list, bypassing
+	 * _parse_where_clause(). Use for conditions the parameterized system cannot
+	 * express, such as OR predicates or IS NULL checks.
+	 *
+	 * Only supported by TableDriver. Drivers that do not use direct SQL (e.g.
+	 * WPPostDriver) will throw a BadMethodCallException at runtime.
+	 *
+	 * The caller is responsible for ensuring the SQL is safe (no user input).
+	 *
+	 * @param string $sql Raw SQL condition, e.g. 'exclude = 0 OR exclude IS NULL'.
+	 * @return self
+	 * @throws \BadMethodCallException When called on a driver that does not support raw SQL.
+	 */
+	public function where_raw( $sql ) {
+		throw new \BadMethodCallException(
+			static::class . ' does not support where_raw(). Use TableDriver-based mappers for raw SQL conditions.'
+		);
+	}
+
+	/**
 	 * Gets the object name.
 	 *
 	 * @return string The object name.
@@ -401,9 +421,12 @@ abstract class DriverBase {
 		// If the value is part of an IN clause or BETWEEN clause and
 		// has multiple values, we attempt to split the values apart into an
 		// array and iterate over them individually.
-		if ( 'in' === $operator ) {
+		// 'not in' / 'not between' must split too — otherwise the multi-value bind reaches
+		// add_where_clause() as the single string "v1,v2,v3" and gets cast to (float) v1,
+		// silently producing `col NOT IN (v1)` and losing every value past the first comma.
+		if ( 'in' === $operator || 'not in' === $operator ) {
 			$values = preg_split( "/'?\s?(,)\s?'?/i", $value );
-		} elseif ( 'between' === $operator ) {
+		} elseif ( 'between' === $operator || 'not between' === $operator ) {
 			$values = preg_split( "/'?\s?(AND)\s?'?/i", $value );
 		}
 

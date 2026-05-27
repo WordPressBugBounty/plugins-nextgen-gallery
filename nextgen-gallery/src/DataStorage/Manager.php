@@ -2407,6 +2407,12 @@ class Manager {
 				$this->generate_image_clone( $image_abspath, $image_abspath, [ 'watermark' => true ] );
 			}
 
+			// Ensure the Pope framework is loaded before this action fires. Third-party plugins
+			// such as ShortPixel hook here and instantiate legacy Pope classes (e.g. C_Gallery_Storage).
+			// On REST upload requests Pope may not have loaded yet because the constructor-time
+			// SHORTPIXEL_IMAGE_OPTIMISER_VERSION check runs before sibling plugins are included.
+			\C_NextGEN_Bootstrap::load_pope( true );
+
 			// Notify other plugins that an image has been added.
 			do_action( 'ngg_added_new_image', $image );
 

@@ -2,8 +2,8 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.2.1
-Tested up to: 6.9
+Stable tag: 4.2.2
+Tested up to: 7.0
 License: GPLv3
 Requires PHP: 7.4
 
@@ -197,6 +197,10 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 == Changelog ==
 
+= 4.2.2 - 05.27.2026 =
+* Added: Google Photos integration — import images directly from your Google Photos account into NextGEN galleries.
+* Added: Dropbox integration — import images from Dropbox into NextGEN galleries.
+
 = 4.2.1 - 05.15.2026 =
 * Fixed: Security hardening across the plugin to better protect site data and reinforce permission checks. We recommend updating.
 * Fixed: Edit Image crop tool now uses the correct aspect ratio from your gallery's thumbnail settings and no longer briefly flickers when opening crop mode.
@@ -218,10 +222,12 @@ For more information, feel free to visit the official website for the NextGEN Ga
 * Added: Duplicate pricelists individually or in bulk from the Ecommerce tab with confirmation modal
 * Added: Column visibility on "Manage Galleries" and "Manage Albums" tables is now saved and restored when returning to the page
 * Added: Automatic EXIF-based JPEG rotation using ImageMagick/Imagick when available to keep uploads correctly oriented
+* Fixed: Multisite — subsite site administrators see Path to galleries as read-only in Imagely so uploads are not pointed at another site’s directory; the main site and network super administrators can still edit the path.
+* Fixed: Multisite — network Enable import function correctly turns off Import Folder for subsites (Imagely UI and REST).
 * Fixed: Gallery image counts now display correctly in the Albums edit page
 * Fixed: Image list in "Add Media > NextGEN Gallery" modal now displays with consistent row heights instead of overflowing thumbnails
 * Fixed: Block editor no longer reverts the preview to the saved gallery when choosing a different gallery with "Change" before inserting
-* Fixed: Block editor validation errors when Bluehost's WonderBlocks feature is enabled
+* Fixed: Block editor validation errors when Bluehost’s WonderBlocks feature is enabled
 * Fixed: Pro Masonry "Maximum image width" and "Image padding" settings now save and apply correctly
 * Fixed: Display type settings in the Customize tab could appear stuck or out of sync after changing layout or saving settings
 * Fixed: Shutter Reloaded lightbox showing double the image count on Mosaic/Masonry and in the admin live preview
@@ -234,6 +240,7 @@ For more information, feel free to visit the official website for the NextGEN Ga
 * Fixed: Album pages crashing on PHP 8.x when a sub-album has no images
 * Fixed: Cases where JPEG uploads with EXIF rotation could appear as failed even though files were created successfully
 * Fixed: Multi-word tag search now works correctly by preserving full phrases before sanitization
+* Improved: Gallery path validation is shared between REST and classic Image Options (safer relative paths).
 * Improved: JPEG upload handling to be more memory-aware on hosts with older GD libraries
 
 = 4.1.1 - 03.13.2025 =

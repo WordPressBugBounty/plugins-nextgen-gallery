@@ -13,6 +13,7 @@ use WP_Error;
 use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataTypes\Image;
+use Imagely\NGG\Settings\GlobalSettings;
 use Imagely\NGG\Util\Security;
 use Imagely\NGG\Util\Transient;
 
@@ -264,7 +265,7 @@ class ImageREST {
 			[
 				'methods'             => 'GET',
 				'callback'            => [ self::class, 'browse_folder' ],
-				'permission_callback' => [ self::class, 'check_edit_permission' ],
+				'permission_callback' => [ self::class, 'check_folder_import_permission' ],
 				'args'                => [
 					'dir' => [
 						'type'              => 'string',
@@ -282,7 +283,7 @@ class ImageREST {
 			[
 				'methods'             => 'POST',
 				'callback'            => [ self::class, 'import_folder' ],
-				'permission_callback' => [ self::class, 'check_edit_permission' ],
+				'permission_callback' => [ self::class, 'check_folder_import_permission' ],
 				'args'                => [
 					'folder'        => [
 						'type'              => 'string',
@@ -357,6 +358,28 @@ class ImageREST {
 		}
 
 		return self::current_user_can_manage_image( $image_id );
+	}
+
+	/**
+	 * Folder browse/import: NextGEN Manage gallery, multisite wpmuImportFolder when applicable,
+	 * and legacy nggGallery::current_user_can( 'NextGEN Import image folder' ) (cap may be unregistered → allowed).
+	 *
+	 * @return bool
+	 */
+	public static function check_folder_import_permission() {
+		if ( ! self::check_edit_permission() ) {
+			return false;
+		}
+		if ( is_multisite() && ! GlobalSettings::get_instance()->get( 'wpmuImportFolder', false ) ) {
+			return false;
+		}
+		if ( class_exists( 'nggGallery', false ) ) {
+			return \nggGallery::current_user_can( 'NextGEN Import image folder' );
+		}
+		// nggGallery should always be loaded; if it isn't, fall back to the
+		// management-cap gate already passed above rather than denying on an
+		// unregistered capability.
+		return true;
 	}
 
 	/**

@@ -10,6 +10,7 @@ namespace Imagely\NGG\REST\DataMappers;
 use WP_REST_Request;
 use WP_REST_Response;
 use WP_Error;
+use Imagely\NGG\Settings\GalleryPathValidation;
 use Imagely\NGG\Settings\Settings;
 use Imagely\NGG\Settings\GlobalSettings;
 use Imagely\NGG\Util\Security;
@@ -368,6 +369,23 @@ class SettingsREST {
 	}
 
 	/**
+	 * @param mixed $gallerypath Raw request value.
+	 * @return true|\WP_Error
+	 */
+	protected static function validate_gallerypath_rest_value( $gallerypath ) {
+		$result = GalleryPathValidation::validate_relative_under_galleries_root( $gallerypath );
+		if ( is_wp_error( $result ) ) {
+			$data = $result->get_error_data();
+			if ( ! is_array( $data ) ) {
+				$data = [];
+			}
+			$data['status'] = 400;
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), $data );
+		}
+		return true;
+	}
+
+	/**
 	 * Update settings via REST API request.
 	 *
 	 * @param \WP_REST_Request $request The request object.
@@ -375,7 +393,19 @@ class SettingsREST {
 	 */
 	public static function update_settings( WP_REST_Request $request ) {
 		$new_settings = $request->get_json_params();
-		$settings     = Settings::get_instance();
+		if ( ! is_array( $new_settings ) ) {
+			$new_settings = [];
+		}
+		if ( is_multisite() && isset( $new_settings['gallerypath'] ) && ! is_main_site() && ! is_super_admin() ) {
+			unset( $new_settings['gallerypath'] );
+		}
+		if ( isset( $new_settings['gallerypath'] ) ) {
+			$gallerypath_validation = self::validate_gallerypath_rest_value( $new_settings['gallerypath'] );
+			if ( is_wp_error( $gallerypath_validation ) ) {
+				return $gallerypath_validation;
+			}
+		}
+		$settings = Settings::get_instance();
 
 		foreach ( $new_settings as $key => $value ) {
 			// Security sanitization with context-aware handling
