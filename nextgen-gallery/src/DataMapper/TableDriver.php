@@ -530,7 +530,7 @@ class TableDriver extends DriverBase {
 
 		// Clean cache.
 		if ( $retval ) {
-			$this->cache = [];
+			$this->flush_query_cache();
 		}
 
 		return $retval;
@@ -564,6 +564,10 @@ class TableDriver extends DriverBase {
 				$id
 			);
 			$retval = $this->_wpdb()->query( $sql );
+		}
+
+		if ( $retval ) {
+			$this->flush_query_cache();
 		}
 
 		return $retval;

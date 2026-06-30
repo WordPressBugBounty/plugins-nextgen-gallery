@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.2.2
+Stable tag: 4.2.3
 Tested up to: 7.0
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,21 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.2.3 - 06.30.2026 =
+* Added: Drag gallery images to a different page within the same gallery — a floating page strip appears while dragging; hover a page chip to navigate, then drop to reorder.
+* Added: Album items (galleries and sub-albums) can also be dragged across pages for easier organization.
+* Fixed: Pro Lightbox settings toggles (Display Cart, Display Comments, and others) now correctly stay OFF after being saved as off — they no longer revert to ON on page reload.
+* Fixed: Pro Slideshow and Pro Horizontal Filmstrip display settings (crop, pan, aspect ratio, width, transition, etc.) now apply correctly on the frontend after being saved in the gallery editor.
+* Fixed: The "Manage gallery" link after importing a folder now opens the correct gallery instead of showing a broken URL.
+* Fixed: Pro Mosaic galleries now display images correctly on sites using Imagely CDN when original files are no longer stored locally.
+* Fixed: Album image count ("X Photos") now shows correctly on galleries inserted with the block-based album layouts (Basic Extended and Basic Compact).
+* Fixed: Bulk "Generate Thumbnails" and "Set Watermark" no longer fail with a server error when an image's embedded metadata is incomplete.
+* Fixed: Thumbnails now correctly hide off-page images when "show all in lightbox" is enabled alongside "images per page".
+* Fixed: PHP code no longer leaks into WordPress admin HTML (which triggered some security firewalls); the gallery insert button also no longer loads on unrelated admin pages.
+* Improved: NextGEN Gallery no longer loads CSS, JavaScript, or icon files on pages that contain no galleries, reducing page weight for visitors.
+* Improved: Gallery data is now stored in the WordPress object cache (Redis, Memcached) between page loads, significantly reducing database queries on high-traffic sites.
+* Improved: Display type lookups are cached, eliminating repeated database scans on every page load.
 
 = 4.2.2 - 05.27.2026 =
 * Added: Google Photos integration — import images directly from your Google Photos account into NextGEN galleries.

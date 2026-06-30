@@ -1245,10 +1245,10 @@ class SettingsREST {
 
 		// Match any of the patterns that confirm gtag.js is actively loaded and configured.
 		$detected = (
-			false !== strpos( $body, 'googletagmanager.com/gtag/js' ) ||  // gtag.js script src
-			false !== strpos( $body, 'gtag("config"' ) ||                 // double-quote variant
-			false !== strpos( $body, "gtag('config'" ) ||                 // single-quote variant
-			false !== strpos( $body, "gtag(\"config\"" ) ||               // escaped double-quote
+			false !== strpos( $body, 'googletagmanager.com/gtag/js' ) || // gtag.js script src
+			false !== strpos( $body, 'gtag("config"' ) || // double-quote variant
+			false !== strpos( $body, "gtag('config'" ) || // single-quote variant
+			false !== strpos( $body, 'gtag("config"' ) || // escaped double-quote
 			false !== strpos( $body, 'gtag/js?id=G-' )                    // GA4 Measurement ID in src
 		);
 
