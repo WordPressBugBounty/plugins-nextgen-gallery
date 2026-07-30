@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.2.3
+Stable tag: 4.2.4
 Tested up to: 7.0
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,11 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.2.4 - 07.30.2026 =
+* Fixed: Security hardening on gallery tag pages to better protect your site. We recommend updating.
+* Fixed: Gallery tag pages for tags containing non-Latin characters (Cyrillic, Greek, CJK, and similar) now resolve to the correct tag instead of showing an empty page.
+* Fixed: The "Images tagged ..." heading on a tag page now shows the tag's name as it is saved in your gallery tags.
 
 = 4.2.3 - 06.30.2026 =
 * Added: Drag gallery images to a different page within the same gallery — a floating page strip appears while dragging; hover a page chip to navigate, then drop to reorder.
