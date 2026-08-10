@@ -38,10 +38,12 @@ class GalleryPathValidation {
 		$root     = wp_normalize_path( $fs->get_document_root( 'galleries' ) );
 		$relative = $fs->add_trailing_slash( $trimmed );
 		$sections = explode( '/', str_replace( '\\', '/', trim( $relative, '/\\' ) ) );
-		if ( in_array( '..', $sections, true ) ) {
+		// Reject both '..' (parent traversal) and '.' (self reference). A lone '.' resolves the path
+		// back to the galleries root, which would widen every downstream boundary to the whole install.
+		if ( in_array( '..', $sections, true ) || in_array( '.', $sections, true ) ) {
 			return new WP_Error(
 				'invalid_gallerypath',
-				__( "Gallery paths may not use '..' to access parent directories.", 'nggallery' )
+				__( "Gallery paths may not use '.' or '..' to reference the current or parent directories.", 'nggallery' )
 			);
 		}
 
