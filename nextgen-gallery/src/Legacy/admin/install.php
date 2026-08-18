@@ -1,6 +1,36 @@
 <?php
 
 /**
+ * Removes duplicate (galleryid, filename) rows from the pictures table, keeping the lowest
+ * pid of each group. Required before adding a UNIQUE KEY on those columns, since ALTER TABLE
+ * ADD UNIQUE INDEX fails on a table that already contains duplicates.
+ *
+ * @param string $nggpictures Fully prefixed table name.
+ */
+function nggallery_dedupe_pictures_table( $nggpictures ) {
+	global $wpdb;
+
+	// $wpdb->prepare() has no placeholder for table/column identifiers, and $nggpictures is a
+	// fully-prefixed table name built by the caller, never user input.
+	// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	$deleted = $wpdb->query(
+		"DELETE p1 FROM `{$nggpictures}` p1
+		INNER JOIN `{$nggpictures}` p2
+			ON p1.galleryid = p2.galleryid
+			AND p1.filename = p2.filename
+			AND p1.pid > p2.pid"
+	);
+	// phpcs:enable
+
+	// If the dedupe query itself failed, the caller's ALTER TABLE ADD UNIQUE INDEX can fail the
+	// same silent way #781 did -- surface it via the same admin notice option the table-creation
+	// check below uses, instead of letting the upgrade proceed as if dedupe had succeeded.
+	if ( false === $deleted && ! empty( $wpdb->last_error ) ) {
+		update_option( 'ngg_init_check', sprintf( 'NextGEN Gallery: could not deduplicate the pictures table before adding a unique index: %s', $wpdb->last_error ) );
+	}
+}
+
+/**
  * Creates all tables for the gallery called during register_activation hook
  */
 function nggallery_install( $installer ) {
@@ -9,6 +39,11 @@ function nggallery_install( $installer ) {
 	$nggpictures = $wpdb->prefix . 'ngg_pictures';
 	$nggallery   = $wpdb->prefix . 'ngg_gallery';
 	$nggalbum    = $wpdb->prefix . 'ngg_album';
+
+	// A UNIQUE KEY on (galleryid, filename) below rejects duplicates going forward, but dbDelta's
+	// ALTER TABLE ADD UNIQUE INDEX silently fails on sites that already have duplicate rows
+	// (see issue #781). Dedupe before the schema upgrade runs so the index actually gets created.
+	nggallery_dedupe_pictures_table( $nggpictures );
 
 	// Create pictures table.
 	$sql = 'CREATE TABLE ' . $nggpictures . " (
@@ -25,7 +60,8 @@ function nggallery_install( $installer ) {
         meta_data LONGTEXT,
         extras_post_id BIGINT(20) DEFAULT '0' NOT NULL,
         PRIMARY KEY  (pid),
-        KEY extras_post_id_key (extras_post_id)
+        KEY extras_post_id_key (extras_post_id),
+        UNIQUE KEY unique_gallery_filename (galleryid,filename)
 	);";
 	$installer->upgrade_schema( $sql );
 

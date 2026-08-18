@@ -2,8 +2,8 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.3.0
-Tested up to: 7.0
+Stable tag: 4.3.1
+Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
 
@@ -196,6 +196,18 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.3.1 - 08.18.2026 =
+* Fixed: Thumbnails are visible again on the legacy Sort Gallery screen (Manage Galleries → open a gallery → Sort images), so images can be reordered visually.
+* Fixed: The "Add new album" field and the Add, Delete and Edit Album controls are back on the legacy Manage Albums screen for administrators, after disappearing in 4.2.1.
+* Fixed: "Scan Folder for new images" no longer creates duplicate images when it is clicked more than once, and duplicates left behind by this bug are cleaned up when you update. The button now also disables itself while a scan is running.
+* Fixed: Album breadcrumbs now appear for sub-albums nested two or more levels deep, instead of vanishing past the first sub-album level.
+* Fixed: The Selected Items list in Edit Album now shows each gallery's current image count instead of a stale "0 images".
+* Fixed: Uploading an image your server cannot process now reports the real reason and lists the formats the server actually supports, instead of a misleading WebP message. Server-side upload errors also surface in the admin instead of failing silently.
+* Fixed: Stage aspect ratio choices such as 3:2, 4:3 and 16:9 no longer revert to "1:1 (Square)" when display settings are saved. Requires NextGEN Pro.
+* Fixed: The admin order detail view now shows the current name of a renamed pricelist item, matching the customer's confirmation page. Requires NextGEN Pro.
+* Fixed: The legacy NextGEN Gallery block now behaves correctly inside the block editor's iframed canvas — the gallery picker modal, its loading spinner and its close button all work — keeping it compatible with upcoming WordPress releases.
+* Changed: NextGEN Gallery now requires PHP 7.4 or newer and will not activate on older versions, matching the requirement already listed for the plugin.
 
 = 4.3.0 - 08.10.2026 =
 * Added: Instagram integration admin screens — connect an Instagram account and configure how its images build a gallery (caption, link, image size and caching), plus a control to clear cached Instagram data. Importing from Instagram requires NextGEN Pro.

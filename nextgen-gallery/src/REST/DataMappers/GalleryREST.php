@@ -1007,6 +1007,21 @@ class GalleryREST {
 				continue;
 			}
 
+			// Re-check existence right before insert: the $old_images_list snapshot above can be
+			// stale by the time this loop runs (e.g. a concurrent scan request importing the same
+			// file), so array_diff() alone isn't a reliable guard against duplicate imports.
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$already_imported = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT `pid` FROM {$wpdb->nggpictures} WHERE `galleryid` = %d AND `filename` = %s LIMIT 1",
+					$id,
+					$filename
+				)
+			);
+			if ( $already_imported ) {
+				continue;
+			}
+
 			try {
 				// Create a new image entity.
 				$image             = new \Imagely\NGG\DataTypes\Image();

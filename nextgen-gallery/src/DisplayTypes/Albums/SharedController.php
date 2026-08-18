@@ -261,35 +261,57 @@ class SharedController extends ParentController {
 	}
 
 	/**
-	 * Finds the parent album of a gallery.
+	 * Finds the parent album of a gallery, returning the ancestor chain.
 	 *
-	 * @param int   $gallery_id Gallery ID.
-	 * @param array $sortorder Array of children belonging to an album.
+	 * Accepts a gallery id (int) or an album key ( 'a{id}' ) and deliberately does not
+	 * normalise it to int: casting 'a5' to 0 was the depth-2 breadcrumb bug. (Separate from
+	 * album_id_in_sortorder(), an album-id-only containment check that does normalise.)
+	 *
+	 * @param int|string $gallery_id Gallery ID (int) or album key ( 'a{id}' ).
+	 * @param array      $sortorder  Array of children belonging to an album.
+	 * @param array      $visited    Album keys already walked; guards against cycles.
 	 *
 	 * @return array
 	 */
-	public function find_gallery_parent( int $gallery_id, array $sortorder ): array {
+	public function find_gallery_parent( $gallery_id, array $sortorder, array &$visited = [] ): array {
 		$map   = AlbumMapper::get_instance();
 		$found = [];
 
 		foreach ( $sortorder as $order ) {
-			if ( strpos( $order, 'a' ) === 0 ) {
-				$album_id = ltrim( $order, 'a' );
-				if ( empty( $this->breadcrumb_cache[ $order ] ) ) {
-					$album                            = $map->find( $album_id );
-					$this->breadcrumb_cache[ $order ] = $album;
-					// Using strict comparison here breaks the breadcrumb generation.
-					//phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
-					if ( is_array( $album->sortorder ) && in_array( $gallery_id, $album->sortorder ) ) {
-						$found[] = $album;
-						break;
-					} elseif ( is_array( $album->sortorder ) ) {
-						$found = $this->find_gallery_parent( (int) $gallery_id, $album->sortorder );
-						if ( $found ) {
-							$found[] = $album;
-							break;
-						}
-					}
+			if ( strpos( $order, 'a' ) !== 0 ) {
+				continue;
+			}
+
+			// Cycle guard.
+			if ( in_array( $order, $visited, true ) ) {
+				continue;
+			}
+			$visited[] = $order;
+
+			$album_id = ltrim( $order, 'a' );
+
+			// Cache only the DB lookup; the sortorder is traversed even on a cache hit, and
+			// array_key_exists() memoises a missing album as null instead of re-querying it.
+			if ( ! array_key_exists( $order, $this->breadcrumb_cache ) ) {
+				$this->breadcrumb_cache[ $order ] = $map->find( $album_id );
+			}
+			$album = $this->breadcrumb_cache[ $order ];
+
+			if ( ! $album ) {
+				// Album row is gone; skip it and keep rendering the rest of the trail.
+				continue;
+			}
+
+			// Using strict comparison here breaks the breadcrumb generation.
+			//phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
+			if ( is_array( $album->sortorder ) && in_array( $gallery_id, $album->sortorder ) ) {
+				$found[] = $album;
+				break;
+			} elseif ( is_array( $album->sortorder ) ) {
+				$found = $this->find_gallery_parent( $gallery_id, $album->sortorder, $visited );
+				if ( $found ) {
+					$found[] = $album;
+					break;
 				}
 			}
 		}
@@ -396,7 +418,7 @@ class SharedController extends ParentController {
 			foreach ( $entities as $entity ) {
 
 				if ( ! empty( $entity->sortorder ) ) {
-					$found = $this->find_gallery_parent( (int) $gallery_id, $entity->sortorder );
+					$found = $this->find_gallery_parent( $gallery_id, $entity->sortorder );
 				}
 
 				if ( ! empty( $found ) ) {

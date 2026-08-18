@@ -2753,8 +2753,15 @@ class Manager {
 			$ext_list     = implode( '|', $extensions );
 
 			if ( ! preg_match( "/({$ext_list})\$/i", $filename ) ) {
-				// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Translated string is safe
-				throw new \E_UploadException( __( 'Invalid image file. Acceptable formats: JPG, GIF, and PNG.', 'nggallery' ) );
+				throw new \E_UploadException(
+					esc_html(
+						sprintf(
+							/* translators: %s: comma-separated list of accepted image formats, e.g. "JPEG, JPG, PNG, GIF, WEBP". */
+							__( 'Invalid image file. Acceptable formats: %s.', 'nggallery' ),
+							ngg_get_allowed_formats_label()
+						)
+					)
+				);
 			}
 			// GD does not support animated WebP and will generate a fatal error when we try to create thumbnails or resize.
 			if ( $this->is_animated_webp( $image_abspath ) ) {
@@ -3482,8 +3489,15 @@ class Manager {
 					$filename = sanitize_text_field( wp_unslash( $_FILES['file']['tmp_name'] ) );
 					@unlink( $filename ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.PHP.NoSilencedErrors.Discouraged
 				}
-				// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Translated string is safe
-				throw new \E_UploadException( __( 'Invalid image file. Acceptable formats: JPG, GIF, and PNG.', 'nggallery' ) );
+				throw new \E_UploadException(
+					esc_html(
+						sprintf(
+							/* translators: %s: comma-separated list of accepted image formats, e.g. "JPEG, JPG, PNG, GIF, WEBP". */
+							__( 'Invalid image file. Acceptable formats: %s.', 'nggallery' ),
+							ngg_get_allowed_formats_label()
+						)
+					)
+				);
 			}
 		} elseif ( $data ) {
 			$retval = $this->upload_base64_image(
