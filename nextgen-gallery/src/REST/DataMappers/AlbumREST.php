@@ -63,7 +63,7 @@ class AlbumREST {
 				'callback'            => [ self::class, 'get_albums' ],
 				'permission_callback' => [ self::class, 'check_read_permission' ],
 				'args'                => [
-					'orderby'  => [
+					'orderby'          => [
 						'type'              => 'string',
 						'enum'              => [
 							'id',
@@ -76,28 +76,28 @@ class AlbumREST {
 						'default'           => 'id',
 						'sanitize_callback' => 'sanitize_text_field',
 					],
-					'order'    => [
+					'order'            => [
 						'type'              => 'string',
 						'enum'              => [ 'ASC', 'DESC' ],
 						'default'           => 'ASC',
 						'sanitize_callback' => 'sanitize_text_field',
 					],
-					'per_page' => [
+					'per_page'         => [
 						'type'              => 'integer',
 						'default'           => 25,
 						'sanitize_callback' => [ self::class, 'sanitize_per_page' ],
 					],
-					'page'     => [
+					'page'             => [
 						'type'              => 'integer',
 						'default'           => 1,
 						'sanitize_callback' => 'absint',
 					],
-					'search'   => [
+					'search'           => [
 						'type'              => 'string',
 						'description'       => 'Search albums by name',
 						'sanitize_callback' => 'sanitize_text_field',
 					],
-					'exclude_ids' => [
+					'exclude_ids'      => [
 						'type'              => 'array',
 						'description'       => 'Album IDs to exclude from results (e.g. the album currently being edited or albums already added).',
 						'items'             => [

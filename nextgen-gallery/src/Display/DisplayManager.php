@@ -77,8 +77,8 @@ class DisplayManager {
 			return;
 		}
 
-		$posts           = $wp_query->posts;
-		$shortcode_tags  = array_keys( Shortcodes::get_instance()->get_shortcodes() );
+		$posts          = $wp_query->posts;
+		$shortcode_tags = array_keys( Shortcodes::get_instance()->get_shortcodes() );
 
 		foreach ( $posts as $post ) {
 			if ( empty( $post->post_content ) ) {

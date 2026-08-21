@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.3.1
+Stable tag: 4.4.0
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,15 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.4.0 - 08.21.2026 =
+* Fixed: Updating no longer slows the site down or throws errors while duplicate images are cleaned up, on sites with very large galleries.
+* Fixed: If that cleanup does fail during an update, you now get a notice explaining why instead of it failing quietly.
+* Fixed: The duplicate-image cleanup now finishes on sites using the older MyISAM database format, where it previously had to be skipped and the duplicates were left behind.
+* Added: The Orders screen shows each order's live print lab status, with a "Resubmit to lab" button when a submission fails. Requires NextGEN Pro.
+* Fixed: Print products you had already picked stay selected when you reopen a pricelist item. Requires NextGEN Pro.
+* Fixed: Editing a pricelist no longer retries a failed save over and over when the print catalog is down — it now shows the real reason and keeps your edits. Requires NextGEN Pro.
+* Changed: Print lab payment setup now follows the plugin's own test-mode setting instead of guessing from the site address, so the right Stripe keys are always used. Requires NextGEN Pro.
 
 = 4.3.1 - 08.18.2026 =
 * Fixed: Thumbnails are visible again on the legacy Sort Gallery screen (Manage Galleries → open a gallery → Sort images), so images can be reordered visually.

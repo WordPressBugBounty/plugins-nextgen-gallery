@@ -591,7 +591,7 @@ class SharedController extends ParentController {
 			];
 
 			if ( $result && ! empty( $result->is_ecommerce_enabled ) ) {
-				$gallery_params['is_ecommerce_enabled']                    = 1;
+				$gallery_params['is_ecommerce_enabled']                      = 1;
 				$gallery_params['original_settings']['is_ecommerce_enabled'] = 1;
 			}
 

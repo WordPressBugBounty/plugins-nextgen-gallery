@@ -1346,7 +1346,10 @@ class Manager {
 						$bh     = ! empty( $params['height'] ) ? (int) $params['height'] : 0;
 
 						if ( ! empty( $params['crop'] ) && $bw && $bh ) {
-							$retval = [ 'width' => $bw, 'height' => $bh ];
+							$retval = [
+								'width'  => $bw,
+								'height' => $bh,
+							];
 						} elseif ( $fw && $fh ) {
 							$ratio = $fw / $fh;
 							if ( $bw && $bh ) {
@@ -1366,7 +1369,10 @@ class Manager {
 								$w = $fw;
 								$h = $fh;
 							}
-							$retval = [ 'width' => $w, 'height' => $h ];
+							$retval = [
+								'width'  => $w,
+								'height' => $h,
+							];
 						}
 					}
 				}

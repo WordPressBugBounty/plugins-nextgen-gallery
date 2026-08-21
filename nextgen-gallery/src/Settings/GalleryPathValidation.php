@@ -51,7 +51,7 @@ class GalleryPathValidation {
 		$root_normalized = wp_normalize_path( $root );
 		$root_prefixed   = trailingslashit( $root_normalized );
 		// PHP 7.4: avoid str_starts_with() (PHP 8+).
-		$under_root      = ( $gallery_abspath === $root_normalized )
+		$under_root = ( $gallery_abspath === $root_normalized )
 			|| (
 				strlen( $gallery_abspath ) >= strlen( $root_prefixed )
 				&& 0 === strpos( $gallery_abspath, $root_prefixed )

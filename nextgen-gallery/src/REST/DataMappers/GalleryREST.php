@@ -549,7 +549,7 @@ class GalleryREST {
 				$placeholders = implode( ',', array_fill( 0, count( $exclude_ids ), '%d' ) );
 
 				// Query builder understands the "NOT IN %s" array-bind form.
-				$conditions[]  = [ 'gid NOT IN %s', $exclude_ids ];
+				$conditions[] = [ 'gid NOT IN %s', $exclude_ids ];
 				// COUNT query uses individual %d placeholders bound to the same IDs.
 				$where_clauses[] = "gid NOT IN ( {$placeholders} )";
 				foreach ( $exclude_ids as $exclude_id ) {
