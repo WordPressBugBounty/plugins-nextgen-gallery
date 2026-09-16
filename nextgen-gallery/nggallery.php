@@ -2,7 +2,7 @@
 /**
  * Plugin Name: NextGEN Gallery
  * Description: The most popular gallery plugin for WordPress and one of the most popular plugins of all time with over 30 million downloads.
- * Version: 4.4.1
+ * Version: 4.5.0
  * Author: Imagely
  * Plugin URI: https://www.imagely.com/wordpress-gallery-plugin/nextgen-gallery/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=pluginuri
  * Author URI: https://www.imagely.com/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=authoruri
@@ -357,6 +357,15 @@ class C_NextGEN_Bootstrap {
 		}
 
 		$relative_class = substr( $class_name, $len );
+
+		// Only a name shaped like a PHP class may be mapped onto a path. The mapping below is a
+		// plain str_replace onto src/, so a caller passing a crafted string to class_exists() -
+		// e.g. a class name read from a database column - could otherwise walk out of src/ with
+		// "..\" segments and require() an uploaded file. Rejected here rather than at each
+		// caller, so the guard cannot be forgotten at a new one.
+		if ( ! preg_match( '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)*$/', $relative_class ) ) {
+			return;
+		}
 
 		$file = $base_dir . str_replace( '\\', DIRECTORY_SEPARATOR, $relative_class ) . '.php';
 
@@ -1035,19 +1044,25 @@ class C_NextGEN_Bootstrap {
 	/**
 	 * Registers the NextGEN taxonomy.
 	 *
+	 * Terms attach to NextGEN picture IDs, not posts, so ngg_tag has no object type.
+	 *
+	 * Keep update_count_callback: without it WordPress counts ngg_tag as a post taxonomy and
+	 * writes count = 0, and Legacy\admin\manage.php deletes ngg_tag terms with count <= 0.
+	 *
 	 * @return void
 	 */
 	public function register_taxonomy() {
 		// Register the NextGEN taxonomy.
 		$args = [
-			'label'    => __( 'Picture tag', 'nggallery' ),
-			'template' => __( 'Picture tag: %2$l.', 'nggallery' ),
-			'helps'    => __( 'Separate picture tags with commas.', 'nggallery' ),
-			'sort'     => true,
-			'args'     => [ 'orderby' => 'term_order' ],
+			'label'                 => __( 'Picture tag', 'nggallery' ),
+			'template'              => __( 'Picture tag: %2$l.', 'nggallery' ),
+			'helps'                 => __( 'Separate picture tags with commas.', 'nggallery' ),
+			'sort'                  => true,
+			'args'                  => [ 'orderby' => 'term_order' ],
+			'update_count_callback' => '_update_generic_term_count',
 		];
 
-		register_taxonomy( 'ngg_tag', 'nggallery', $args );
+		register_taxonomy( 'ngg_tag', [], $args );
 	}
 
 	/**
@@ -1249,7 +1264,7 @@ class C_NextGEN_Bootstrap {
 		define( 'NGG_PRODUCT_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PLUGIN_DIR, '/\\' ), 'products' ] ) );
 		define( 'NGG_MODULE_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PRODUCT_DIR, '/\\' ), 'photocrati_nextgen', 'modules' ] ) );
 		define( 'NGG_PLUGIN_STARTED_AT', microtime() );
-		define( 'NGG_PLUGIN_VERSION', '4.4.1' );
+		define( 'NGG_PLUGIN_VERSION', '4.5.0' );
 
 		$random_version = function_exists( 'wp_rand' ) ? wp_rand( 0, mt_getrandmax() ) : mt_rand( 0, mt_getrandmax() ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rand_mt_rand
 		define( 'NGG_SCRIPT_VERSION', defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? (string) $random_version : NGG_PLUGIN_VERSION );

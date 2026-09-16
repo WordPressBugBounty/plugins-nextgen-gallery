@@ -8,7 +8,7 @@ use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataStorage\Manager as StorageManager;
 
-use Imagely\NGG\Util\{Filesystem, Security};
+use Imagely\NGG\Util\{Filesystem, MassAssignment, Security};
 
 /**
  * Controller for Lightroom integration.
@@ -168,8 +168,9 @@ class Controller {
 			}
 
 			if ( $task_list != null ) {
-				$task_count = count( $task_list );
-				$auth_count = 0;
+				$task_count  = count( $task_list );
+				$auth_count  = 0;
+				$denied_caps = [];
 
 				foreach ( $task_list as &$task_item ) {
 					$task_name  = isset( $task_item['name'] ) ? $task_item['name'] : null;
@@ -178,9 +179,23 @@ class Controller {
 
 					$task_auth = false;
 
+					// The capability each refused task was actually missing, so the response can
+					// say which one rather than naming a single capability for every refusal.
+					$task_denied_cap = null;
+
 					switch ( $task_type ) {
 						case 'gallery_add':
-							$task_auth = Security::is_allowed( 'nextgen_edit_gallery' );
+							$task_auth       = Security::is_allowed( 'nextgen_edit_gallery' );
+							$task_denied_cap = 'NextGEN Manage gallery';
+							break;
+						case 'gallery_list_get':
+							// Reads every gallery's title/description/preview via find_all() in
+							// handle_job(). It had no case here at all, so it was stamped 'forbid'
+							// and skipped - which the old $task_count == $auth_count gate at least
+							// surfaced as an outright error. Under the relaxed gate it would have
+							// become a silent no-result on a successful job.
+							$task_auth       = Security::is_allowed( 'nextgen_edit_gallery' );
+							$task_denied_cap = 'NextGEN Manage gallery';
 							break;
 						case 'gallery_remove':
 						case 'gallery_edit':
@@ -193,30 +208,65 @@ class Controller {
 								$gallery        = $gallery_mapper->find( $query_id );
 							}
 
+							/*
+							 * The "NextGEN Manage gallery" capability is required in every case
+							 * (#932), and ownership is never authorization on its own (#933): the
+							 * stored author id outlives the capability being revoked, and a
+							 * Subscriber who happens to own a gallery must not be able to edit it
+							 * through this endpoint. Past that gate, ownership decides whether the
+							 * additional "NextGEN Manage others gallery" capability is also needed.
+							 *
+							 * The author column is compared as an integer: the mapper returns it as
+							 * a numeric string, so a strict comparison against the user id is false
+							 * for every user.
+							 */
+							$task_auth       = Security::is_allowed( 'nextgen_edit_gallery' );
+							$task_denied_cap = 'NextGEN Manage gallery';
+
 							if ( $gallery != null ) {
-								$task_auth = ( wp_get_current_user()->ID == $gallery->author || Security::is_allowed( 'nextgen_edit_gallery_unowned' ) );
-							} else {
-								$task_auth = Security::is_allowed( 'nextgen_edit_gallery' );
+								$is_owner = ( (int) \get_current_user_id() === (int) $gallery->author );
+
+								$task_auth = ( $task_auth
+									&& ( $is_owner || Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) );
+
+								// Which capability to name in the refusal (#933): an owner who is
+								// refused is missing the base capability, anyone else is missing the
+								// others-gallery one. Only reported when the base gate passed, since
+								// without it the base capability is what is missing.
+								if ( ! $is_owner && Security::is_allowed( 'nextgen_edit_gallery' ) ) {
+									$task_denied_cap = 'NextGEN Manage others gallery';
+								}
 							}
 
 							break;
 						case 'album_remove':
 						case 'album_edit':
 						case 'album_add':
-							$task_auth = Security::is_allowed( 'nextgen_edit_album' );
+							$task_auth       = Security::is_allowed( 'nextgen_edit_album' );
+							$task_denied_cap = 'NextGEN Edit album';
 							break;
 						case 'image_list_move':
+							// A no-op in handle_job(), so nothing is lost by leaving it unauthorized.
 							break;
 					}
 
 					if ( $task_auth ) {
 						++$auth_count;
+					} elseif ( null !== $task_denied_cap ) {
+						$denied_caps[ $task_denied_cap ] = true;
 					}
 
 					$task_item['auth'] = $task_auth ? 'allow' : 'forbid';
 				}
 
-				if ( $task_count == $auth_count ) {
+				// Queue the job when at least one task is authorized, rather than requiring every
+				// task to be. Each task already carries its own 'auth' flag, and handle_job()
+				// re-reads it and skips anything that is not 'allow', so an unauthorized task
+				// drops only itself. Requiring $task_count == $auth_count meant one unauthorized
+				// task voided the whole publish - a Lightroom collection is submitted as a single
+				// task list, so a photographer lost the entire batch, images included, and the
+				// only thing the desktop client showed was the generic "Authorization Failed."
+				if ( $auth_count > 0 ) {
 					$job_id = $api->add_job(
 						[
 							'user'     => $user_obj->ID,
@@ -244,6 +294,26 @@ class Controller {
 							'job_handler_maxfiles' => $handler_maxfiles,
 						];
 
+						// Name the refused tasks rather than letting them disappear. They are
+						// skipped individually at execution time, so without this the client is
+						// told the job was accepted and simply never hears about them again.
+						if ( $auth_count < $task_count ) {
+							$skipped = $task_count - $auth_count;
+
+							$response['result_object']['unauthorized_task_count'] = $skipped;
+
+							$response['warning'] = [
+								'code'    => API::ERR_NOT_AUTHORIZED,
+								'message' => sprintf(
+									/* translators: 1: number of skipped tasks, 2: total number of tasks, 3: comma-separated capability names. */
+									__( '%1$s of %2$s tasks were skipped for lack of permission. Ask an administrator to grant your role %3$s under NextGEN Gallery > Settings > Roles.', 'nggallery' ),
+									number_format_i18n( $skipped ),
+									number_format_i18n( $task_count ),
+									self::describe_denied_caps( $denied_caps )
+								),
+							];
+						}
+
 						if ( ! defined( 'NGG_API_SUPPRESS_QUICK_EXECUTE' ) || NGG_API_SUPPRESS_QUICK_EXECUTE == false ) {
 							if ( ! $api->is_execution_locked() ) {
 								$this->start_locked_execute();
@@ -257,9 +327,31 @@ class Controller {
 										// everything was finished, remove job.
 										$api->remove_job( $job_id );
 									}
-								} catch ( \Exception $e ) {
-									// Exception is silently caught here as job execution errors are handled by the API.
-									unset( $e );
+									// \Throwable rather than \Exception, for the same reason as the
+									// executor: a PHP 8 TypeError out of handle_job() is an \Error.
+								} catch ( \Throwable $e ) {
+									// handle_job() records the upload failures it recognizes against
+									// the individual task. Anything escaping to here does not, so log
+									// it instead of discarding it - this is the quick-execute leg of
+									// the same job the executor runs, and it is where a failure of the
+									// capability re-check inside handle_job() would surface.
+									// Logged ungated: the record is an exception string, not
+									// caller-chosen keys, and a production install does not
+									// define WP_DEBUG, so a gate here means the failure is
+									// recorded nowhere at all.
+									// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+									error_log( 'NextGEN Gallery: Lightroom quick-execute failed: ' . wp_strip_all_tags( (string) $e->getMessage(), true ) );
+
+									// Revise the 'ok' set above: the job is still enqueued
+									// because remove_job() was skipped, so the caller has to
+									// learn the run failed and retry through job_handler_url
+									// rather than treat the publish as finished. Same code and
+									// message the executor leg reports for an escaped throwable.
+									$response['result'] = 'error';
+									$response['error']  = [
+										'code'    => API::ERR_JOB_NOT_ADDED,
+										'message' => __( 'Job execution failed.', 'nggallery' ),
+									];
 								}
 
 								$this->stop_locked_execute();
@@ -273,10 +365,20 @@ class Controller {
 						];
 					}
 				} else {
+					// Name the missing capability rather than returning a bare
+					// "Authorization Failed.". Lightroom surfaces one generic line per photo, so a
+					// permissions refusal is indistinguishable from a host or network problem - and
+					// it is the one cause the photographer can actually act on. Which capability is
+					// missing depends on the task, so it is collected per task above rather than
+					// hard-coded here.
 					$response['result'] = 'error';
 					$response['error']  = [
 						'code'    => API::ERR_NOT_AUTHORIZED,
-						'message' => __( 'Authorization Failed.', 'nggallery' ),
+						'message' => sprintf(
+							/* translators: %s: comma-separated capability names. */
+							__( 'Authorization failed: this account lacks the required NextGEN permission. Ask an administrator to grant your role %s under NextGEN Gallery > Settings > Roles.', 'nggallery' ),
+							self::describe_denied_caps( $denied_caps )
+						),
 					];
 				}
 			} else {
@@ -316,11 +418,17 @@ class Controller {
 		} elseif ( $job_list != null ) {
 			$this->start_locked_execute();
 
+			// Declared outside the try: when these lived inside it, a throw before they
+			// were assigned left both undefined, so the `$done_count == $job_count`
+			// comparison below evaluated null == null and the endpoint reported
+			// "Job list is finished." for a run in which nothing executed.
+			$job_count     = count( $job_list );
+			$done_count    = 0;
+			$client_result = [];
+			$job_error     = null;
+
 			try {
-				$extra_data    = $this->param_json( 'extra_data' ) ?? [];
-				$job_count     = count( $job_list );
-				$done_count    = 0;
-				$client_result = [];
+				$extra_data = $this->param_json( 'extra_data' ) ?? [];
 
 				foreach ( $_FILES as $key => $file ) {
 					if ( substr( $key, 0, strlen( 'file_data_' ) ) == 'file_data_' ) {
@@ -348,14 +456,33 @@ class Controller {
 						break;
 					}
 				}
-			} catch ( \Exception $e ) {
-				// Exception is silently caught here as job execution errors are handled by the API.
-				unset( $e );
+				// \Throwable, not \Exception: handle_job() calls count() and property
+				// assignments on values decoded from the request, so a PHP 8 TypeError -
+				// an \Error, which \Exception does not catch - is a realistic outcome and
+				// used to escape as an uncaught fatal.
+			} catch ( \Throwable $e ) {
+				// handle_job() catches the upload exceptions it knows about and records
+				// them per task. Anything reaching here is outside that set, so it is a
+				// genuine failure of the run and must not be discarded: task progress is
+				// persisted only after the task loop completes, so an escape here also
+				// loses every per-task status accumulated in this call.
+				$job_error = $e->getMessage();
+
+				if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+					// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					error_log( 'NextGEN Gallery: Lightroom job execution failed: ' . wp_strip_all_tags( (string) $job_error, true ) );
+				}
 			}
 
 			$this->stop_locked_execute();
 
-			if ( $done_count == $job_count ) {
+			if ( null !== $job_error ) {
+				$response['result'] = 'error';
+				$response['error']  = [
+					'code'    => API::ERR_JOB_NOT_ADDED,
+					'message' => __( 'Job execution failed.', 'nggallery' ),
+				];
+			} elseif ( $done_count == $job_count ) {
 				$response['result'] = 'ok';
 				$response['info']   = [
 					'code'    => API::INFO_JOB_LIST_FINISHED,
@@ -608,6 +735,36 @@ class Controller {
 	protected function stop_locked_execute() {
 		$this->get_nextgen_api()->set_execution_locked( false );
 		$this->nextgen_api_locked = false;
+	}
+
+	/**
+	 * Renders the capabilities that refused tasks were missing, for a client-facing message.
+	 *
+	 * Refusals in one task list can come from different capabilities - a gallery edit needs
+	 * "NextGEN Manage gallery" (or "NextGEN Manage others gallery" for someone else's gallery),
+	 * an album task needs "NextGEN Edit album" - so naming a single one would misdiagnose the
+	 * others. Falls back to a generic phrase when nothing was recorded, which happens when the
+	 * only refused tasks are types that need no capability.
+	 *
+	 * Must live in this class: both call sites are in enqueue_nextgen_api_task_list_action() and
+	 * reach it through `self::`, which resolves to the defining class. It was first added below,
+	 * inside `class API`, where `self::describe_denied_caps()` from here raised
+	 * "Call to undefined method ...\Controller::describe_denied_caps()" on both refusal paths -
+	 * a runtime resolution failure that `php -l` cannot see and no CI on this PR would have caught.
+	 *
+	 * @param array $denied_caps Capability name => true.
+	 * @return string
+	 */
+	private static function describe_denied_caps( array $denied_caps ) {
+		$names = array_keys( $denied_caps );
+
+		if ( ! $names ) {
+			return __( 'the required NextGEN permissions', 'nggallery' );
+		}
+
+		sort( $names );
+
+		return '"' . implode( '", "', $names ) . '"';
 	}
 }
 
@@ -1074,6 +1231,43 @@ class API {
 	}
 
 	/**
+	 * Re-verifies at execution time that the job's user may act on a task.
+	 *
+	 * The `auth` flag each task carries was decided by
+	 * enqueue_nextgen_api_task_list_action() and then persisted with the job in the
+	 * `ngg_api_job_list` option. execute_nextgen_api_task_list_action() drains that
+	 * option without authenticating the requester, and handle_job() impersonates the
+	 * stored user, so a capability revoked between enqueue and execute would otherwise
+	 * go unnoticed and the queued write would still run. Every task type that destroys
+	 * a record, writes a file, or assigns entity properties calls this.
+	 *
+	 * @param string      $capability     Capability required in all cases.
+	 * @param object|null $entity         Entity being acted on, or null when there is none yet.
+	 * @param string|null $owner_field    Entity field holding the owner's user ID, when the
+	 *                                    entity type has one. Albums have no owner column.
+	 * @param string|null $unowned_capability Capability that permits acting on someone
+	 *                                    else's record.
+	 * @return bool
+	 */
+	protected function task_is_authorized( $capability, $entity = null, $owner_field = null, $unowned_capability = null ) {
+		if ( ! Security::is_allowed( $capability ) ) {
+			return false;
+		}
+
+		// Ownership only narrows; it never substitutes for the capability above.
+		if ( null === $entity || null === $owner_field || null === $unowned_capability ) {
+			return true;
+		}
+
+		if ( ! isset( $entity->{$owner_field} ) ) {
+			return true;
+		}
+
+		return \get_current_user_id() === (int) $entity->{$owner_field}
+			|| Security::is_allowed( $unowned_capability );
+	}
+
+	/**
 	 * Finds an array entry by key and value.
 	 *
 	 * @param array  $array_target
@@ -1248,6 +1442,15 @@ class API {
 			$task_status = isset( $task_item['status'] ) ? $task_item['status'] : null;
 			$task_result = isset( $task_item['result'] ) ? $task_item['result'] : null;
 
+			// Reset per-task, not just where it is used. PHP locals persist across foreach
+			// iterations, and the gallery_edit branch assigns this only on the path where a
+			// gallery was resolved. Any branch that skips that assignment - a gallery that
+			// was not found, or an authorization refusal - would otherwise read the value
+			// left behind by an earlier task and, if that task had a chunked image list,
+			// rewrite this task's terminal 'error' status to 'unfinished', so the job was
+			// never removed and the refused task was re-executed indefinitely.
+			$image_list_unfinished = false;
+
 			// make sure we don't repeat execution of already finished tasks.
 			if ( $task_status == 'done' ) {
 				++$done_count;
@@ -1276,6 +1479,16 @@ class API {
 
 			switch ( $task_type ) {
 				case 'gallery_add':
+					if ( ! $this->task_is_authorized( 'nextgen_edit_gallery' ) ) {
+						$task_status = 'error';
+						$task_error  = [
+							'level'   => 'fatal',
+							'message' => __( 'Not authorized to create a gallery.', 'nggallery' ),
+						];
+
+						break;
+					}
+
 					$mapper     = GalleryMapper::get_instance();
 					$gallery    = null;
 					$gal_errors = '';
@@ -1320,6 +1533,13 @@ class API {
 						$mapper  = GalleryMapper::get_instance();
 						$gallery = $mapper->find( $task_query['id'], true );
 						$error   = null;
+						$warning = null;
+
+						if ( ! $this->task_is_authorized( 'nextgen_edit_gallery', $gallery, 'author', 'nextgen_edit_gallery_unowned' ) ) {
+							/* translators: %1$s: gallery ID */
+							$error   = __( 'Not authorized to edit gallery (%1$s).', 'nggallery' );
+							$gallery = null;
+						}
 
 						if ( $gallery != null ) {
 							if ( $task_type == 'gallery_remove' ) {
@@ -1352,14 +1572,36 @@ class API {
 								if ( isset( $task_object['property_list'] ) ) {
 									$properties = $task_object['property_list'];
 
-									foreach ( $properties as $key => $value ) {
+									// Only descriptive schema fields may be assigned: 'path' is the
+									// directory every image path in the gallery is built from and
+									// 'author' decides who may manage it.
+									$assignable = MassAssignment::filter( $properties, 'gallery', $refused );
+
+									foreach ( $assignable as $key => $value ) {
 										$gallery->$key = $value;
+									}
+
+									if ( $refused ) {
+										// Reported as a warning on a 'done' task, not through $error:
+										// $error puts the task in the 'error' status with level 'fatal',
+										// which the Lightroom client turns into a failed publish for the
+										// whole collection, and it would also suppress the save-failure
+										// report further down. A refused key is not a failed publish.
+										// The image list is deliberately still processed - an
+										// unknown property key is no reason to discard uploads.
+										// Concatenated, not sprintf()'d, because $warning is itself a
+										// format string that gets the id interpolated further down:
+										// an inner sprintf() would undo describe_refused()'s percent
+										// doubling and the outer call would then eat a literal "%"
+										// coming from a request-supplied key.
+										/* translators: %1$s: gallery ID. The refused property names are appended. */
+										$warning = __( 'Gallery (%1$s) was saved, but these properties may not be set from Lightroom and were ignored: ', 'nggallery' )
+											. MassAssignment::describe_refused( $refused );
 									}
 								}
 
-								// this is used to determine whether the task is complete.
-								$image_list_unfinished = false;
-
+								// Used to determine whether the task is complete. Reset once per task
+								// in the loop preamble above, so every branch reads a defined value.
 								if ( isset( $task_object['image_list'] ) && $wp_fs != null ) {
 									$storage_path = isset( $task_object['storage_path'] ) ? $task_object['storage_path'] : null;
 									$storage_path = trim( $storage_path, '/\\' );
@@ -1531,21 +1773,21 @@ class API {
 									$error = __( 'Could not access file system for gallery (%1$s).', 'nggallery' );
 								}
 
+								// save() is now truthful about a no-op update - TableDriver::save_entity()
+								// tests `false !== $this->_update()` rather than truthiness - so a
+								// falsy return here means the write really was refused. The previous
+								// guard inferred that from $wpdb->last_error, which missed the
+								// wpdb::update() paths that return false before issuing any query
+								// and so reported a rejected save as success.
 								if ( ! $gallery->save() ) {
-									// wpdb->update() returns 0 (falsy) when no columns changed,
-									// even though the save succeeded. Only treat as error when
-									// validation failed (array) or a real DB error occurred.
-									// flush_query_cache() after save_entity() clears only a PHP
-									// array, so $wpdb->last_error still reflects the DB result.
-									global $wpdb;
-									if ( $error == null && ( is_array( $gallery->validation() ) || ! empty( $wpdb->last_error ) ) ) {
+									if ( $error == null ) {
 										$gal_errors = '[' . wp_json_encode( $gallery->validation() ) . ']';
 										/* translators: %1$s: gallery ID */
 										$error = __( 'Failed to save modified gallery (%1$s). ', 'nggallery' ) . $gal_errors;
 									}
 								}
 							}
-						} else {
+						} elseif ( $error == null ) {
 							/* translators: %1$s: gallery ID */
 							$error = __( 'Could not find gallery (%1$s).', 'nggallery' );
 						}
@@ -1556,6 +1798,15 @@ class API {
 						if ( $error == null ) {
 							$task_status              = 'done';
 							$task_result['object_id'] = $gallery->id();
+
+							if ( $warning != null ) {
+								// Non-fatal: the task stays 'done' so the client does not fail the
+								// publish, but the refused property names still reach the user.
+								$task_error = [
+									'level'   => 'warning',
+									'message' => sprintf( $warning, (string) $task_query['id'] ),
+								];
+							}
 						} else {
 							$task_status = 'error';
 							$task_error  = [
@@ -1578,6 +1829,16 @@ class API {
 
 					break;
 				case 'album_add':
+					if ( ! $this->task_is_authorized( 'nextgen_edit_album' ) ) {
+						$task_status = 'error';
+						$task_error  = [
+							'level'   => 'fatal',
+							'message' => __( 'Not authorized to create an album.', 'nggallery' ),
+						];
+
+						break;
+					}
+
 					$mapper = AlbumMapper::get_instance();
 
 					$name       = isset( $task_object['name'] ) ? $task_object['name'] : '';
@@ -1623,9 +1884,19 @@ class API {
 				case 'album_remove':
 				case 'album_edit':
 					if ( isset( $task_query['id'] ) ) {
-						$mapper = AlbumMapper::get_instance();
-						$album  = $mapper->find( $task_query['id'], true );
-						$error  = null;
+						$mapper  = AlbumMapper::get_instance();
+						$album   = $mapper->find( $task_query['id'], true );
+						$error   = null;
+						$warning = null;
+
+						// Albums carry no owner column, so there is no ownership dimension to
+						// narrow on - but the capability still has to hold at execution time,
+						// for the same reason it does for galleries.
+						if ( ! $this->task_is_authorized( 'nextgen_edit_album' ) ) {
+							/* translators: %1$s: album ID */
+							$error = __( 'Not authorized to edit album (%1$s).', 'nggallery' );
+							$album = null;
+						}
 
 						if ( $album ) {
 							if ( $task_type == 'album_remove' ) {
@@ -1649,8 +1920,20 @@ class API {
 								if ( isset( $task_object['property_list'] ) ) {
 									$properties = $task_object['property_list'];
 
-									foreach ( $properties as $key => $value ) {
+									// Only descriptive schema fields may be assigned - see the
+									// gallery_edit case above.
+									$assignable = MassAssignment::filter( $properties, 'album', $refused );
+
+									foreach ( $assignable as $key => $value ) {
 										$album->$key = $value;
+									}
+
+									if ( $refused ) {
+										// See the gallery_edit case above.
+										// Concatenated for the same reason as the gallery case above.
+										/* translators: %1$s: album ID. The refused property names are appended. */
+										$warning = __( 'Album (%1$s) was saved, but these properties may not be set from Lightroom and were ignored: ', 'nggallery' )
+											. MassAssignment::describe_refused( $refused );
 									}
 								}
 
@@ -1685,12 +1968,21 @@ class API {
 									$album->sortorder = array_keys( $album_items );
 								}
 
+								// Same as the gallery twin above: the no-op-update problem is fixed in
+								// TableDriver::save_entity(), so a falsy save() here is a real refusal
+								// and needs no $wpdb->last_error inference. Fixing it in the mapper is
+								// what closes both branches at once - the previous approach had to be
+								// applied per call site, which is how the album half stayed broken
+								// after the gallery half was fixed in April.
 								if ( ! $mapper->save( $album ) ) {
-									/* translators: %1$s: album ID */
-									$error = __( 'Failed to save modified album (%1$s).', 'nggallery' );
+									if ( $error == null ) {
+										$alb_errors = '[' . wp_json_encode( $album->validation() ) . ']';
+										/* translators: %1$s: album ID */
+										$error = __( 'Failed to save modified album (%1$s). ', 'nggallery' ) . $alb_errors;
+									}
 								}
 							}
-						} else {
+						} elseif ( $error == null ) {
 							/* translators: %1$s: album ID */
 							$error = __( 'Could not find album (%1$s).', 'nggallery' );
 						}
@@ -1698,6 +1990,14 @@ class API {
 						if ( $error == null ) {
 							$task_status              = 'done';
 							$task_result['object_id'] = $album->id();
+
+							if ( $warning != null ) {
+								// See the gallery_edit case above.
+								$task_error = [
+									'level'   => 'warning',
+									'message' => sprintf( $warning, (string) $task_query['id'] ),
+								];
+							}
 						} else {
 							$task_status = 'error';
 							$task_error  = [
