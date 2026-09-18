@@ -2,7 +2,7 @@
 /**
  * Plugin Name: NextGEN Gallery
  * Description: The most popular gallery plugin for WordPress and one of the most popular plugins of all time with over 30 million downloads.
- * Version: 4.5.0
+ * Version: 4.5.1
  * Author: Imagely
  * Plugin URI: https://www.imagely.com/wordpress-gallery-plugin/nextgen-gallery/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=pluginuri
  * Author URI: https://www.imagely.com/?utm_source=ngglite&utm_medium=pluginlist&utm_campaign=authoruri
@@ -980,18 +980,61 @@ class C_NextGEN_Bootstrap {
 			'get_nextgen_api_token',
 		];
 
-		// Nonce verification is not necessary here: authentication is handled by the Lightroom\Controller class.
+		// Nonce verification is not possible here: the Lightroom client never requests or
+		// sends one. Each action authenticates itself in Lightroom\Controller, and this
+		// routing layer adds a cheap precondition in front of it: a request carrying no
+		// credential field at all is answered here and never reaches the controller.
+		//
+		// This is a PRESENCE test, not an authorization gate - "tok=x" satisfies it - so
+		// #1029's second hardening note (gate the four actions at the routing layer *instead
+		// of* relying on the controller) is NOT delivered by it. The controller remains the
+		// authority on whether a credential is valid.
+		//
+		// '' !== rather than empty() so a password or token of "0" is not refused here.
 		//
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		if ( ! empty( $_REQUEST['photocrati_ajax'] )
-		&& ! empty( $_REQUEST['action'] )
-		&& '1' === (string) ( wp_unslash( $_REQUEST['photocrati_ajax'] ) )
-		&& in_array( $_REQUEST['action'], $lightroom_actions, true ) ) {
+		$lightroom_is_action = ! empty( $_REQUEST['photocrati_ajax'] )
+			&& ! empty( $_REQUEST['action'] )
+			&& '1' === (string) ( wp_unslash( $_REQUEST['photocrati_ajax'] ) )
+			&& in_array( $_REQUEST['action'], $lightroom_actions, true );
+
+		$lightroom_has_credential = ( isset( $_REQUEST['tok'] ) && '' !== $_REQUEST['tok'] )
+			|| ( isset( $_REQUEST['job_post_back'] ) && '' !== $_REQUEST['job_post_back'] )
+			|| ( isset( $_REQUEST['q'] ) && '' !== $_REQUEST['q'] && isset( $_REQUEST['z'] ) && '' !== $_REQUEST['z'] );
+
+		if ( $lightroom_is_action && $lightroom_has_credential ) {
 			add_action(
 				'init',
 				function () {
 					$this->register_taxonomy();
 					( new \Imagely\NGG\Lightroom\Controller() )->run();
+				},
+				0
+			);
+		} elseif ( $lightroom_is_action ) {
+			// Answered in the controller's own envelope. Letting the request fall through to
+			// the front controller returned a bare { "error": "..." } with no error.code, which
+			// is the only field the desktop client reads - so a mistyped password became an
+			// unintelligible failure instead of "Authentication Failed."
+			add_action(
+				'init',
+				function () {
+					$this->register_taxonomy();
+
+					wp_send_json(
+						[
+							'result' => 'error',
+							'error'  => [
+								// The literal, not API::ERR_NOT_AUTHENTICATED: the autoloader maps
+								// Lightroom\Controller to Controller.php, and Lightroom\API lives in
+								// that same file under a name it cannot resolve - referencing the
+								// constant here fatals. The constants' numeric values are fixed by
+								// contract (see the note on the API class), so 1002 is stable.
+								'code'    => 1002,
+								'message' => __( 'Authentication Failed.', 'nggallery' ),
+							],
+						]
+					);
 				},
 				0
 			);
@@ -1264,7 +1307,7 @@ class C_NextGEN_Bootstrap {
 		define( 'NGG_PRODUCT_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PLUGIN_DIR, '/\\' ), 'products' ] ) );
 		define( 'NGG_MODULE_DIR', implode( DIRECTORY_SEPARATOR, [ rtrim( NGG_PRODUCT_DIR, '/\\' ), 'photocrati_nextgen', 'modules' ] ) );
 		define( 'NGG_PLUGIN_STARTED_AT', microtime() );
-		define( 'NGG_PLUGIN_VERSION', '4.5.0' );
+		define( 'NGG_PLUGIN_VERSION', '4.5.1' );
 
 		$random_version = function_exists( 'wp_rand' ) ? wp_rand( 0, mt_getrandmax() ) : mt_rand( 0, mt_getrandmax() ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rand_mt_rand
 		define( 'NGG_SCRIPT_VERSION', defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? (string) $random_version : NGG_PLUGIN_VERSION );

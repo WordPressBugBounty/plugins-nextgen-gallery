@@ -3515,6 +3515,40 @@ class Manager {
 					$image = $image_mapper->find( $image );
 				}
 			}
+
+			// A re-publish sends a filename with no id. Where ngg_pictures carries the UNIQUE
+			// index unique_gallery_filename (galleryid, filename) the insert is then refused by
+			// the database ("Duplicate entry '<gid>-<file>'"), which is what made a Lightroom
+			// re-publish fail the whole job - so adopt the row it would collide with and update
+			// it instead.
+			//
+			// Gated on $override, which is what "replace this file" means: only a caller that
+			// asked to override should update an existing row rather than insert. Callers that
+			// pass false (Scan Folder, the pro Dropbox/Video importers) keep their old
+			// behaviour, which matters because the index is not present everywhere - #941 defers
+			// the migration on already-populated tables, and such a table can legitimately hold
+			// several rows with the same (galleryid, filename).
+			//
+			// Ordered by pid so the adopted row is deterministic on those tables; find_first()
+			// has no ORDER BY and would return whichever row MySQL surfaced first.
+			if ( ! $image && $override ) {
+				$gallery_id_for_lookup = is_numeric( $dst_gallery ) ? (int) $dst_gallery : (int) $dst_gallery->gid;
+				$existing              = $image_mapper->select()
+					->where_and(
+						[
+							[ 'filename = %s', $filename ],
+							[ 'galleryid = %d', $gallery_id_for_lookup ],
+						]
+					)
+					->order_by( 'pid', 'ASC' )
+					->limit( 1, 0 )
+					->run_query();
+
+				if ( ! empty( $existing[0] ) ) {
+					$image = $image_mapper->convert_to_model( $existing[0] );
+				}
+			}
+
 			$is_new = ! $image;
 			if ( $is_new ) {
 				$image = $image_mapper->create();
@@ -3547,6 +3581,22 @@ class Manager {
 					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped, WordPress.Security.EscapeOutput.ExceptionNotEscaped
 					throw new \E_UploadException( $exception );
 				}
+
+				// A falsy save with no validation errors is still a refused write, not a no-op:
+				// save_entity() resolves the 0-affected-rows case itself and returns the pid.
+				// It used to fall through to find( false ) below, which returned null and left
+				// backup_image() and the size generation dereferencing it - the request died on
+				// `Attempt to read property "pid" on null` and the job reported
+				// ERR_JOB_NOT_ADDED with nothing naming the real cause.
+				throw new \E_UploadException(
+					esc_html(
+						sprintf(
+							/* translators: %s: image filename */
+							__( 'Could not save image %s.', 'nggallery' ),
+							$filename
+						)
+					)
+				);
 			}           // Important: do not remove this line. The image mapper's save() routine imports metadata
 			// meaning we must re-acquire a new $image object after saving it above; if we do not our
 			// existing $image object will lose any metadata retrieved during said save() method.

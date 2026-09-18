@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.5.0
+Stable tag: 4.5.1
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,12 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.5.1 - 09.18.2026 =
+* Fixed: Security hardening on Lightroom publishing. We recommend updating.
+* Fixed: A failed Lightroom publish now explains why, instead of showing the same message for every cause.
+* Fixed: Re-publishing an image that is already in the gallery no longer fails the publish.
+* Note: A Lightroom publish already in progress when you update needs to be published again.
 
 = 4.5.0 - 09.16.2026 =
 * Added: Set up payments from one guided Payments hub. Requires NextGEN Pro.

@@ -3885,6 +3885,17 @@ class C_Gallery_Storage extends C_Component
                     $image = $image_mapper->find($image);
                 }
             }
+            // Kept in step with Imagely\NGG\DataStorage\Manager::import_image_file() - see the
+            // longer note there. Gated on $override, and ordered by pid so the adopted row is
+            // deterministic on tables where #941 deferred the unique-key migration and
+            // duplicates exist.
+            if (!$image && $override) {
+                $gallery_id_for_lookup = is_numeric($dst_gallery) ? (int) $dst_gallery : (int) $dst_gallery->gid;
+                $existing = $image_mapper->select()->where_and([['filename = %s', $filename], ['galleryid = %d', $gallery_id_for_lookup]])->order_by('pid', 'ASC')->limit(1, 0)->run_query();
+                if (!empty($existing[0])) {
+                    $image = $image_mapper->convert_to_model($existing[0]);
+                }
+            }
             $is_new = !$image;
             if ($is_new) {
                 $image = $image_mapper->create();
@@ -3901,7 +3912,11 @@ class C_Gallery_Storage extends C_Component
             $image_id = $image_mapper->save($image);
             if (!$image_id) {
                 $exception = '';
-                foreach ($image->get_errors() as $field => $errors) {
+                $errors_by_field = $image->get_errors();
+                // get_errors() returns a bool when the entity is valid, which is exactly the path
+                // the blank-message fallback below serves - iterating it emitted a PHP warning
+                // mid-response. The modern copy guards with is_array() for the same reason.
+                foreach (is_array($errors_by_field) ? $errors_by_field : [] as $field => $errors) {
                     foreach ($errors as $error) {
                         if (!empty($exception)) {
                             $exception .= '<br/>';
@@ -3909,6 +3924,12 @@ class C_Gallery_Storage extends C_Component
                         /* translators: 1: filename, 2: error message */
                         $exception .= sprintf(__('Error while uploading %1$s: %2$s', 'nggallery'), $filename, $error);
                     }
+                }
+                if (empty($exception)) {
+                    // A refused write with no field errors used to throw an empty message,
+                    // which reached the client as a blank failure.
+                    /* translators: %s: image filename */
+                    $exception = sprintf(__('Could not save image %s.', 'nggallery'), $filename);
                 }
                 throw new E_UploadException(esc_html($exception));
             }
