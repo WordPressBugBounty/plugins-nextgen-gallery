@@ -682,6 +682,12 @@ h3#preview_tab {
 	font-weight: bold;
 }
 
+#preview_tab_content .header_row.ngg_manual_order_notice {
+	padding: 6px 8px;
+	border-left: 4px solid #d63638;
+	background: #fcf0f1;
+}
+
 #preview_tab_content #entity_list li.clear {
 	float: none;
 	clear: both;

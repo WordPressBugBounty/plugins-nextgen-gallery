@@ -423,6 +423,10 @@ class WPPostDriver extends DriverBase {
 		//
         // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->query( "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value) VALUES " . implode( ',', $sql_parts ) );
+
+		// The queries above bypass the metadata API, leaving a stale 'post_meta' cache. A later
+		// update_post_meta() would compare against it, see no change and skip the write.
+		wp_cache_delete( $post_id, 'post_meta' );
 	}
 
 	/**

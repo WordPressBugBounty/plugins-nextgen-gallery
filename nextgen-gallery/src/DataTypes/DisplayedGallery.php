@@ -609,6 +609,18 @@ class DisplayedGallery extends Model {
 		// Apply a sorting order.
 		if ( $sort_by ) {
 			$mapper->order_by( $sort_by, $sort_direction );
+
+			// Every image missing from an explicit id list gets FIND_IN_SET 0, so the
+			// whole tail shares one sort value. Order that tail by the gallery's own
+			// arrangement instead of leaving it to the pid tiebreaker alone. The
+			// column is numbered per gallery, so this only holds for a single one:
+			// across several it would interleave them instead of appending.
+			if ( 'new_sortorder' === $sort_by
+				&& 'tags' !== $source_obj->name
+				&& 1 === count( (array) $this->container_ids ) ) {
+				$mapper->order_by( 'sortorder', 'ASC' );
+			}
+
 			// Append a deterministic pid tiebreaker so tied sort values cannot be
 			// partitioned differently across LIMIT/OFFSET page queries. Without it,
 			// rows sharing a sort value (e.g. appended images all at sortorder 0) can

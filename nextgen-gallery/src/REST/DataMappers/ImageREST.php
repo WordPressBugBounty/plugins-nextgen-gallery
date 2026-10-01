@@ -14,6 +14,7 @@ use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataTypes\Image;
 use Imagely\NGG\Settings\GlobalSettings;
+use Imagely\NGG\Util\Filesystem;
 use Imagely\NGG\Util\Security;
 use Imagely\NGG\Util\Transient;
 
@@ -1258,7 +1259,21 @@ class ImageREST {
 
 		foreach ( $attachment_ids as $id ) {
 			try {
-				$abspath   = get_attached_file( $id );
+				// Import the attached file: for a downscaled upload that is the smaller
+				// derivative, which keeps thumbnail generation within reach of a modest
+				// memory limit. The untouched original is promoted into the backup below.
+				$abspath = get_attached_file( $id );
+
+				// file_get_contents() raises an uncatchable ValueError on an empty path.
+				if ( empty( $abspath ) || ! file_exists( $abspath ) ) {
+					return new WP_REST_Response(
+						[
+							'error' => __( 'Image generation failed', 'nggallery' ),
+						],
+						500
+					);
+				}
+
 				$file_data = file_get_contents( $abspath );
 
 				if ( empty( $file_data ) ) {
@@ -1269,13 +1284,16 @@ class ImageREST {
 						500
 					);
 				}
-				$file_name  = \Imagely\NGG\Display\I18N::mb_basename( $abspath );
+				// Name the gallery file after the original so the '-scaled' suffix does not leak.
+				$file_name  = \Imagely\NGG\Display\I18N::mb_basename( Filesystem::get_attachment_original_abspath( $id ) );
 				$attachment = get_post( $id );
 				$image      = $storage->upload_image( $gallery_id, $file_name, $file_data );
 
 				if ( $image ) {
 					// Potentially import metadata from WordPress.
 					$image = $image_mapper->find( $image );
+
+					$storage->store_attachment_original_as_backup( $image, $id );
 					if ( ! empty( $attachment->post_excerpt ) ) {
 						$image->alttext = $attachment->post_excerpt;
 					}

@@ -623,6 +623,19 @@ class RoutingApp {
 	}
 
 	/**
+	 * Builds a regex matching the parameter slug as a whole segment of a path.
+	 *
+	 * A plain substring test also matches the slug inside a longer segment, so a
+	 * page slugged "wedding-gallery" reads as already carrying the slug "gallery".
+	 *
+	 * @param string $param_slug
+	 * @return string
+	 */
+	public function param_slug_segment_regex( $param_slug ) {
+		return '#(?:^|/)' . preg_quote( $param_slug, '#' ) . '(?=/|$)#';
+	}
+
+	/**
 	 * Adds a parameter to the application's request URI
 	 *
 	 * @param string      $key
@@ -637,7 +650,7 @@ class RoutingApp {
 
 		$uri   = $this->get_app_request_uri();
 		$parts = [ $uri ];
-		if ( $param_slug && strpos( $uri, $param_slug ) === false ) {
+		if ( $param_slug && ! preg_match( $this->param_slug_segment_regex( $param_slug ), $uri ) ) {
 			$parts[] = $param_slug;
 		}
 		$parts[] = $this->create_parameter_segment( $key, $value, $id, $use_prefix );
@@ -715,9 +728,16 @@ class RoutingApp {
 		$settings    = $this->_settings;
 		$request_uri = $this->get_app_request_uri();
 		$sep         = preg_quote( $settings->router_param_separator, '#' );
+		$param_regex = "(/?([^/]+{$sep})?[^/]+{$sep}[^/]+/?)";
+
+		// Without a slug, require at least one real key/value segment: allowing
+		// zero makes the pattern match every request URI.
+		if ( ! $settings->router_param_slug ) {
+			return (bool) preg_match( "#{$param_regex}{1,}$#", $request_uri );
+		}
 
 		// If we detect the MVC_PARAM_SLUG, then we assume that we have parameters.
-		if ( $settings->router_param_slug && strpos( $request_uri, '/' . $settings->router_param_slug . '/' ) !== false ) {
+		if ( strpos( $request_uri, '/' . $settings->router_param_slug . '/' ) !== false ) {
 			$retval = true;
 		}
 
@@ -728,8 +748,8 @@ class RoutingApp {
 				'',
 				[
 					'#',
-					$settings->router_param_slug ? '/' . preg_quote( $settings->router_param_slug, '#' ) . '/?' : '',
-					"(/?([^/]+{$sep})?[^/]+{$sep}[^/]+/?){0,}",
+					'/' . preg_quote( $settings->router_param_slug, '#' ) . '/?',
+					"{$param_regex}{0,}",
 					'$#',
 				]
 			);
@@ -762,6 +782,13 @@ class RoutingApp {
 	}
 
 	public function passthru() {
+		// A REST route is never a gallery parameter block, and this runs before
+		// the REST server reads REQUEST_URI, so rewriting it would truncate the
+		// route.
+		if ( Router::is_rest_request() ) {
+			return;
+		}
+
 		$router = Router::get_instance();
 
 		$_SERVER['NGG_ORIG_REQUEST_URI'] = isset( $_SERVER['REQUEST_URI'] ) ? Router::sanitize_request_uri_for_routing( $_SERVER['REQUEST_URI'] ) : '';
@@ -825,13 +852,22 @@ class RoutingApp {
 			$generated_url = $base_url;
 		}
 
-		$original_url    = $generated_url;
-		$generated_parts = explode( $settings->get( 'router_param_slug', 'nggallery' ), $generated_url );
-		$generated_url   = $generated_parts[0];
-		$ngg_parameters  = '/';
-		if ( isset( $generated_parts[1] ) ) {
-			$parts          = explode( '?', $generated_parts[1] );
-			$ngg_parameters = array_shift( $parts );
+		$original_url   = $generated_url;
+		$param_slug     = $settings->get( 'router_param_slug', 'nggallery' );
+		$param_slug     = is_scalar( $param_slug ) ? trim( (string) $param_slug, '/' ) : '';
+		$ngg_parameters = '/';
+
+		// Match the slug as a whole path segment: searching the whole url also
+		// matches an occurrence inside the host, splitting it in the wrong place.
+		$url_parts = $this->wp_parse_url( $generated_url );
+		if ( '' !== $param_slug
+			&& preg_match( $this->param_slug_segment_regex( $param_slug ), $url_parts['path'], $match, PREG_OFFSET_CAPTURE )
+		) {
+			$parameters         = substr( $url_parts['path'], $match[0][1] + strlen( $match[0][0] ) );
+			$ngg_parameters     = '' === $parameters ? '/' : $parameters;
+			$url_parts['path']  = substr( $url_parts['path'], 0, $match[0][1] );
+			$url_parts['query'] = '';
+			$generated_url      = $this->construct_url_from_parts( $url_parts );
 		}
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request parameter for routing
 		$post_permalink = get_permalink( isset( $_REQUEST['p'] ) ? intval( sanitize_text_field( wp_unslash( $_REQUEST['p'] ) ) ) : 0 );
@@ -1032,8 +1068,11 @@ class RoutingApp {
 		}
 
 		// If there's a slug, we can assume everything after is a parameter,
-		// even if it's not in our desired format.
-		$retval = preg_replace( '#' . $slug . '.*$#', '', $retval );
+		// even if it's not in our desired format. Matched as a whole path
+		// segment; without a slug there is nothing to anchor to.
+		if ( '' !== $slug ) {
+			$retval = preg_replace( '#' . $slug . '(/.*)?$#', '', $retval );
+		}
 
 		if ( ! $retval ) {
 			$retval = '/';
@@ -1294,7 +1333,7 @@ class RoutingApp {
 			}
 			$parts['path'] = $this->join_paths(
 				$parts['path'],
-				$param_slug && strpos( $parts['path'], $param_slug ) === false ? $param_slug : '',
+				$param_slug && ! preg_match( $this->param_slug_segment_regex( $param_slug ), $parts['path'] ) ? $param_slug : '',
 				$this->create_parameter_segment( $key, $value, $id, $use_prefix )
 			);
 			$parts['path'] = str_replace( '//', '/', $parts['path'] );

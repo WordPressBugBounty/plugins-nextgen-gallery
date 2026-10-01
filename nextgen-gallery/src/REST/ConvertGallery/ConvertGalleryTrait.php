@@ -12,6 +12,7 @@ use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataStorage\Manager as StorageManager;
 use Imagely\NGG\DataTypes\Gallery;
+use Imagely\NGG\Util\Filesystem;
 
 // Exit if accessed directly.
 if ( ! defined( 'ABSPATH' ) ) {
@@ -98,6 +99,8 @@ trait ConvertGalleryTrait {
 			}
 
 			try {
+				// Import the attached file (the smaller derivative for a downscaled upload);
+				// the untouched original is promoted into the backup below.
 				$abspath = get_attached_file( $attachment_id );
 
 				if ( ! $abspath || ! file_exists( $abspath ) ) {
@@ -120,13 +123,16 @@ trait ConvertGalleryTrait {
 					continue;
 				}
 
-				$file_name  = \Imagely\NGG\Display\I18N::mb_basename( $abspath );
+				// Name the gallery file after the original so the '-scaled' suffix does not leak.
+				$file_name  = \Imagely\NGG\Display\I18N::mb_basename( Filesystem::get_attachment_original_abspath( $attachment_id ) );
 				$attachment = get_post( $attachment_id );
 				$ngg_image  = $storage->upload_image( $gallery_id, $file_name, $file_data );
 
 				if ( $ngg_image ) {
 					// Import metadata from WordPress attachment.
 					$ngg_image = $image_mapper->find( $ngg_image );
+
+					$storage->store_attachment_original_as_backup( $ngg_image, $attachment_id );
 
 					// Use the alt text from the passed data, WordPress attachment, or title as fallback.
 					// Priority: 1) Provided alt text, 2) WP attachment caption, 3) WP attachment alt meta, 4) Title as last resort.

@@ -147,6 +147,17 @@ class BlockManager {
 
 		register_block_type( 'imagely/main-block', $media_metadata );
 
+		/**
+		 * Filters whether the legacy gallery block is offered in the block inserter.
+		 *
+		 * Sites that have moved to the Imagely block can return false so the legacy
+		 * block cannot be picked by accident. The block type stays registered either
+		 * way, so placements already in post content keep rendering and stay editable.
+		 *
+		 * @param bool $show_in_inserter Whether to offer the legacy block.
+		 */
+		$show_legacy_block_in_inserter = (bool) \apply_filters( 'ngg_show_legacy_block_in_inserter', true );
+
 		// Register legacy block only for existing installations
 		if ( $this->is_existing_installation() ) {
 			$legacy_block_asset_file = NGG_PLUGIN_DIR . '/static/IGW/Block/build/block.asset.php';
@@ -188,6 +199,11 @@ class BlockManager {
 			$legacy_metadata                          = file_exists( $legacy_block_json_file ) ? json_decode( file_get_contents( $legacy_block_json_file ), true ) : [];
 			$legacy_metadata['editor_script_handles'] = [ 'imagely-nextgen-gallery-legacy-editor-script' ];
 			$legacy_metadata['editor_style_handles']  = [ 'imagely-nextgen-gallery-editor-style' ];
+
+			if ( ! $show_legacy_block_in_inserter ) {
+				$legacy_metadata['supports']             = isset( $legacy_metadata['supports'] ) ? (array) $legacy_metadata['supports'] : [];
+				$legacy_metadata['supports']['inserter'] = false;
+			}
 
 			register_block_type( 'imagely/nextgen-gallery', $legacy_metadata );
 		}

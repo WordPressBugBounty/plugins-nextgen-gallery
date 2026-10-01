@@ -357,8 +357,14 @@ class A_NextGen_AddGallery_Ajax extends Mixin
             if (empty($retval['error'])) {
                 $retval['gallery_id'] = $gallery_id;
                 $storage = \Imagely\NGG\DataStorage\Manager::get_instance();
+                // Originals can be several times larger than the scaled derivative.
+                if (function_exists('wp_raise_memory_limit')) {
+                    wp_raise_memory_limit('image');
+                }
                 foreach ($attachment_ids as $id) {
                     try {
+                        // Import the attached file (the smaller derivative for a downscaled
+                        // upload); the untouched original is promoted into the backup below.
                         $abspath = get_attached_file($id);
                         if (empty($abspath) || !file_exists($abspath)) {
                             $retval['error'] = __('Image file not found for attachment ID: ', 'nggallery') . $id;
@@ -366,7 +372,8 @@ class A_NextGen_AddGallery_Ajax extends Mixin
                         }
                         // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
                         $file_data = @file_get_contents($abspath);
-                        $file_name = \Imagely\NGG\Display\I18N::mb_basename($abspath);
+                        // Name the gallery file after the original so '-scaled' does not leak.
+                        $file_name = \Imagely\NGG\Display\I18N::mb_basename(\Imagely\NGG\Util\Filesystem::get_attachment_original_abspath($id));
                         $attachment = get_post($id);
                         if (empty($file_data)) {
                             $retval['error'] = __('Image generation failed. Could not read file: ', 'nggallery') . $abspath;
@@ -376,6 +383,7 @@ class A_NextGen_AddGallery_Ajax extends Mixin
                         if ($image) {
                             // Potentially import metadata from WordPress.
                             $image = $image_mapper->find($image);
+                            $storage->store_attachment_original_as_backup($image, $id);
                             if (!empty($attachment->post_excerpt)) {
                                 $image->alttext = $attachment->post_excerpt;
                             }

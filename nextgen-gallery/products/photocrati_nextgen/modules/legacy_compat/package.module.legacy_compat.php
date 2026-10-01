@@ -4174,6 +4174,12 @@ class C_Gallery_Storage extends C_Component
                 if ($this->object->is_zip_directory_entry($filename)) {
                     continue;
                 }
+                // extractTo() collapses traversal itself, but core guards both of its own
+                // branches this way and an entry shaped like one is worth naming.
+                if (0 !== validate_file($filename)) {
+                    $manager->collect_skipped_zip_entry($filename);
+                    continue;
+                }
                 if (!$this->object->is_allowed_image_extension($filename)) {
                     $manager->collect_skipped_zip_entry($filename);
                     continue;
@@ -4194,6 +4200,12 @@ class C_Gallery_Storage extends C_Component
                 if (strpos($basename, '.') === 0) {
                     continue;
                 }
+                // PclZip reduces no traversal of its own, so an entry named "../x.jpg" would
+                // be written above $dest_path. The extension gate does not catch it.
+                if (0 !== validate_file($zipItem['stored_filename'])) {
+                    $manager->collect_skipped_zip_entry($zipItem['stored_filename']);
+                    continue;
+                }
                 if (!$this->object->is_allowed_image_extension($zipItem['stored_filename'])) {
                     $manager->collect_skipped_zip_entry($zipItem['stored_filename']);
                     continue;
@@ -4208,7 +4220,10 @@ class C_Gallery_Storage extends C_Component
                 $manager->log_extraction_refusals($zipfile);
                 return false;
             }
-            if (!$zipObj->extractByIndex(implode(',', $indexesToExtract), $dest_path)) {
+            // Option form, not the two-argument shorthand: the restriction is only parsed when
+            // the first variadic argument is an option constant.
+            $extracted = $zipObj->extractByIndex(implode(',', $indexesToExtract), PCLZIP_OPT_PATH, $dest_path, PCLZIP_OPT_EXTRACT_DIR_RESTRICTION, $dest_path);
+            if (!$extracted) {
                 return false;
             }
         }

@@ -234,6 +234,14 @@ class SettingsREST {
 	 * @return mixed
 	 */
 	protected static function sanitize_setting( $value, $key = '' ) {
+		// The slug is interpolated into patterns and used as an explode()
+		// separator, so anything not a usable string becomes the default.
+		if ( 'router_param_slug' === $key ) {
+			$slug = is_scalar( $value ) && ! is_bool( $value ) ? (string) $value : '';
+			$slug = trim( trim( sanitize_text_field( $slug ) ), '/' );
+			return '' === $slug ? 'nggallery' : $slug;
+		}
+
 		// Handle arrays and objects recursively
 		if ( is_array( $value ) ) {
 			return array_map(

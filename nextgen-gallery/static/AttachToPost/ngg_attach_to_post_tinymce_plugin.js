@@ -193,6 +193,7 @@
       editor.on("BeforeSetContent", function (event) {
         handle_shortcode(event, "[ngg_images ");
         handle_shortcode(event, "[ngg ");
+        handle_shortcode(event, "[imagely ");
       });
 
       /**
@@ -219,36 +220,35 @@
           var found_attribute_assignment = false;
           var current_attribute_enclosure = null;
           var last_found_char = false;
+          var found_closing_bracket = false;
           var content_length = event.content.length;
-          while (true) {
+          while (index < content_length) {
             var char = event.content[index];
-            if (char == '"' || (char == "'" && last_found_char == "=")) {
-              // Is this the closing quote for an already found attribute assignment?
-              if (
-                found_attribute_assignment &&
-                current_attribute_enclosure == char
-              ) {
+            if (found_attribute_assignment) {
+              // Inside an attribute value, so only its own matching quote ends it.
+              // Testing the opening rule again here would miss a closing single
+              // quote, whose preceding character is the value rather than "=".
+              if (char == current_attribute_enclosure) {
                 found_attribute_assignment = false;
                 current_attribute_enclosure = null;
-              } else {
-                found_attribute_assignment = true;
-                current_attribute_enclosure = char;
               }
+            } else if (char == '"' || (char == "'" && last_found_char == "=")) {
+              found_attribute_assignment = true;
+              current_attribute_enclosure = char;
             } else if (char == "]") {
-              // we've found a shortcode closing tag. But, we need to ensure
-              // that this ] isn't within the value of a shortcode attribute
-              if (!found_attribute_assignment) {
-                break; //exit loop - we've found the shortcode
-              }
-            }
-
-            last_found_char = char;
-
-            if (index == content_length) {
+              // A ] outside of an attribute value closes the shortcode.
+              found_closing_bracket = true;
               break;
             }
 
+            last_found_char = char;
             index++;
+          }
+
+          // An unterminated shortcode has no end to wrap up to. Leave the content
+          // alone rather than absorbing everything that follows into a placeholder.
+          if (!found_closing_bracket) {
+            break;
           }
 
           // Replace the shortcode with a placeholder

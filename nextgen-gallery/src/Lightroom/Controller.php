@@ -730,21 +730,43 @@ class Controller {
 	 * @return array
 	 */
 	public function get_nextgen_api_path_list_action() {
-		$api        = $this->get_nextgen_api();
-		$app_config = $this->param( 'app_config' );
+		$api = $this->get_nextgen_api();
+		// Client sends app_config as a JSON string; param() would leave it a string.
+		$app_config = $this->param_json( 'app_config' );
 		$user_obj   = $this->authenticate_user();
 		$response   = [];
+
+		if ( ! is_array( $app_config ) ) {
+			$app_config = [];
+		}
 
 		if ( $user_obj != null && ! is_a( $user_obj, 'WP_Error' ) ) {
 			wp_set_current_user( $user_obj->ID );
 
-			$ftp_method = isset( $app_config['ftp_method'] ) ? $app_config['ftp_method'] : 'ftp';
+			// Authentication alone isn't authorization: without this, any authenticated
+			// account could make the server open an outbound FTP/SSH connection to a
+			// caller-named host/port and hand it a caller-named username/password. The
+			// sibling enqueue action gates every task on the same capability.
+			if ( ! Security::is_allowed( 'nextgen_edit_gallery' ) ) {
+				return [
+					'result' => 'error',
+					'error'  => [
+						'code'    => API::ERR_NOT_AUTHORIZED,
+						'message' => __( 'You do not have permission to determine the FTP path.', 'nggallery' ),
+					],
+				];
+			}
+
+			// Coerced, not just presence-checked: a non-scalar value (array/object) here
+			// reaches ftp_connect()/ssh2_connect() and throws a TypeError that @ can't
+			// suppress, so a malformed shape must be normalized rather than passed through.
+			$ftp_method = isset( $app_config['ftp_method'] ) && is_scalar( $app_config['ftp_method'] ) ? (string) $app_config['ftp_method'] : 'ftp';
 			$creds      = [
 				'connection_type' => $ftp_method == 'sftp' ? 'ssh' : 'ftp',
-				'hostname'        => $app_config['ftp_host'],
-				'port'            => $app_config['ftp_port'],
-				'username'        => $app_config['ftp_user'],
-				'password'        => $app_config['ftp_pass'],
+				'hostname'        => isset( $app_config['ftp_host'] ) && is_scalar( $app_config['ftp_host'] ) ? (string) $app_config['ftp_host'] : null,
+				'port'            => isset( $app_config['ftp_port'] ) ? absint( $app_config['ftp_port'] ) : null,
+				'username'        => isset( $app_config['ftp_user'] ) && is_scalar( $app_config['ftp_user'] ) ? (string) $app_config['ftp_user'] : null,
+				'password'        => isset( $app_config['ftp_pass'] ) && is_scalar( $app_config['ftp_pass'] ) ? (string) $app_config['ftp_pass'] : null,
 			];
 
 			require_once ABSPATH . 'wp-admin/includes/file.php';

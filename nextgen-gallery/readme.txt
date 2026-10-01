@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.5.1
+Stable tag: 4.5.2
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,23 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.5.2 - 10.01.2026 =
+* Fixed: Security hardening on ZIP imports, so an archive can no longer write files outside the gallery folder on servers that use the fallback unzip method. We recommend updating.
+* Fixed: Security hardening on the REST API, so a gallery's folder location and ownership can no longer be changed by users who should only be able to edit its content and settings. We recommend updating.
+* Fixed: Saving a gallery through the REST API reported success even when part of the request was rejected. Rejected fields are now reported back.
+* Fixed: Image uploads and Media Library imports failed when the gallery permalink slug was set to a common word such as "images".
+* Fixed: Clearing the gallery permalink slug broke the Imagely admin screens and the site's REST API. The slug now falls back to its default instead of being saved empty.
+* Fixed: WordPress's own REST endpoints could stop working depending on the gallery permalink slug.
+* Fixed: Gallery links and pagination broke when the site's domain or a page's slug contained the gallery permalink slug.
+* Fixed: Galleries inserted with the [imagely] shortcode no longer disappear from posts saved in the Classic editor, and editing one no longer loses the gallery it pointed at.
+* Fixed: A gallery shortcode written with single quotes no longer deletes the rest of the post's content when the page is opened in the Visual tab.
+* Improved: The [imagely] shortcode now appears in the Classic editor's Visual tab as a NextGEN Gallery placeholder with Edit and Remove buttons, matching [ngg].
+* Fixed: Images added to a gallery after a manual sort was saved on a page now appear in the gallery's order instead of being stranded at the end.
+* Added: The legacy gallery block's sort tab now says when a manual image order is in force, with a one-click option to go back to following the gallery.
+* Added: A filter for sites that have moved to the Imagely block to hide the legacy gallery block from the block inserter.
+* Fixed: Importing from the Media Library now stores your full-resolution image instead of the smaller copy WordPress creates for large uploads, so digital download options above 2560 pixels no longer disappear.
+* Fixed: Lightroom desktop client's FTP/SFTP path discovery no longer fails on PHP 8.
 
 = 4.5.1 - 09.18.2026 =
 * Fixed: Security hardening on Lightroom publishing. We recommend updating.

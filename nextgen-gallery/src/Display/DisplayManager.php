@@ -205,7 +205,7 @@ class DisplayManager {
 
 			// Special handling for the imagely shortcode
 			if ( 'imagely' === $this_shortcode_name ) {
-				$params = self::convert_imagely_params_for_enqueuing( $params );
+				$params = self::convert_imagely_params( $params );
 				if ( ! $params ) {
 					continue; // Skip if gallery not found or no ID provided
 				}
@@ -248,12 +248,16 @@ class DisplayManager {
 	}
 
 	/**
-	 * Converts imagely shortcode parameters to standard NGG parameters for resource enqueuing
+	 * Converts imagely shortcode parameters to standard NGG display parameters.
+	 *
+	 * The imagely shortcode addresses a gallery or album directly, where NGG's own
+	 * parameters describe a displayed gallery, so anything resolving an imagely
+	 * shortcode has to translate first.
 	 *
 	 * @param array $params The imagely shortcode parameters
 	 * @return array|false The converted parameters or false if gallery/album not found
 	 */
-	private static function convert_imagely_params_for_enqueuing( $params ) {
+	public static function convert_imagely_params( $params ) {
 		// Check if this is a gallery or album shortcode
 		$gallery_id = isset( $params['id'] ) ? intval( $params['id'] ) : 0;
 		$album_id   = isset( $params['album'] ) ? intval( $params['album'] ) : 0;

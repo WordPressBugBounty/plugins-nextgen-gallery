@@ -16,6 +16,7 @@ use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\DisplayType as DisplayTypeMapper;
 
 use Imagely\NGG\DataTypes\Gallery;
+use Imagely\NGG\Util\MassAssignment;
 use Imagely\NGG\Util\Security;
 use Imagely\NGG\Util\Transient;
 
@@ -176,10 +177,6 @@ class GalleryREST {
 						'type'              => 'string',
 						'sanitize_callback' => 'wp_kses_post', // TODO get correct sanitize callback.
 					],
-					'path'    => [
-						'type'              => 'string',
-						'sanitize_callback' => 'sanitize_text_field',
-					],
 				],
 			]
 		);
@@ -206,14 +203,6 @@ class GalleryREST {
 						'type'              => 'string',
 						'sanitize_callback' => 'sanitize_text_field',
 					],
-					'path'                  => [
-						'type'              => 'string',
-						'sanitize_callback' => 'sanitize_text_field',
-					],
-					'author'                => [
-						'type'              => 'integer',
-						'sanitize_callback' => 'absint',
-					],
 					'previewpic'            => [
 						'type'              => 'integer',
 						'sanitize_callback' => 'absint',
@@ -225,14 +214,6 @@ class GalleryREST {
 					'galdesc'               => [
 						'type'              => 'string',
 						'sanitize_callback' => 'wp_kses_post',
-					],
-					'slug'                  => [
-						'type'              => 'string',
-						'sanitize_callback' => 'sanitize_title',
-					],
-					'extras_post_id'        => [
-						'type'              => 'integer',
-						'sanitize_callback' => 'absint',
 					],
 					'parent_id'             => [
 						'type'              => 'integer',
@@ -765,6 +746,90 @@ class GalleryREST {
 	}
 
 	/**
+	 * Collected on purpose so MassAssignment refuses them rather than this endpoint ignoring
+	 * them silently.
+	 *
+	 * @var string[]
+	 */
+	const NEVER_EDITABLE_PROPERTIES = [
+		'path',
+		'author',
+		'slug',
+		'extras_post_id',
+	];
+
+	/**
+	 * Properties create_gallery() accepts.
+	 *
+	 * @var string[]
+	 */
+	const CREATE_PROPERTIES = [
+		'title',
+		'galdesc',
+	];
+
+	/**
+	 * Properties update_gallery() accepts. `display_type_settings` needs the merge below rather
+	 * than a straight assignment, and `parent_id` is not a gallery column.
+	 *
+	 * @var string[]
+	 */
+	const UPDATE_PROPERTIES = [
+		'name',
+		'title',
+		'galdesc',
+		'previewpic',
+		'pageid',
+		'is_private',
+		'display_type',
+		'external_source',
+		'is_ecommerce_enabled',
+		'pricelist_id',
+	];
+
+	/**
+	 * Collects the gallery properties the request supplied. Read by name, not from the route
+	 * schema: an unregistered parameter is still readable from the body.
+	 *
+	 * @param WP_REST_Request $request  The REST request object.
+	 * @param string[]        $accepted Property names this endpoint accepts.
+	 * @return array
+	 */
+	private static function collect_request_properties( WP_REST_Request $request, array $accepted ) {
+		$properties = [];
+
+		foreach ( array_merge( $accepted, self::NEVER_EDITABLE_PROPERTIES ) as $key ) {
+			if ( $request->has_param( $key ) ) {
+				$properties[ $key ] = $request->get_param( $key );
+			}
+		}
+
+		return $properties;
+	}
+
+	/**
+	 * Refuses the request and names the properties. Nothing is saved, so the caller is not told
+	 * an edit succeeded that never stored the value.
+	 *
+	 * @param array $refused Refused property keys.
+	 * @return WP_Error
+	 */
+	private static function refused_property_error( array $refused ) {
+		return new WP_Error(
+			'rest_gallery_property_not_editable',
+			sprintf(
+				// translators: %s is a comma-separated list of property names.
+				__( 'These gallery properties may not be set through this endpoint and nothing was saved: %s', 'nggallery' ),
+				MassAssignment::describe_refused( $refused )
+			),
+			[
+				'status'  => 403,
+				'refused' => $refused,
+			]
+		);
+	}
+
+	/**
 	 * Create a new gallery
 	 *
 	 * @param WP_REST_Request $request Optional. The REST request object.
@@ -774,11 +839,23 @@ class GalleryREST {
 		$mapper  = GalleryMapper::get_instance();
 		$gallery = new Gallery();
 
-		$gallery->name    = sanitize_title( $request->get_param( 'title' ) );
-		$gallery->title   = $request->get_param( 'title' );
-		$gallery->path    = $request->get_param( 'path' );
-		$gallery->author  = get_current_user_id();
-		$gallery->galdesc = $request->get_param( 'galdesc' );
+		$assignable = MassAssignment::filter(
+			self::collect_request_properties( $request, self::CREATE_PROPERTIES ),
+			'gallery',
+			$refused
+		);
+
+		if ( $refused ) {
+			return self::refused_property_error( $refused );
+		}
+
+		foreach ( $assignable as $key => $value ) {
+			$gallery->$key = $value;
+		}
+
+		// Server-derived, never taken from the request. The mapper builds the folder from these.
+		$gallery->name   = sanitize_title( $request->get_param( 'title' ) );
+		$gallery->author = get_current_user_id();
 
 		try {
 			$mapper->save( $gallery );
@@ -816,46 +893,32 @@ class GalleryREST {
 			);
 		}
 
-		if ( $request->has_param( 'name' ) ) {
-			$gallery->name = sanitize_title( $request->get_param( 'name' ) );
+		$assignable = MassAssignment::filter(
+			self::collect_request_properties( $request, self::UPDATE_PROPERTIES ),
+			'gallery',
+			$refused
+		);
+
+		if ( $refused ) {
+			return self::refused_property_error( $refused );
 		}
-		if ( $request->has_param( 'title' ) ) {
-			$gallery->title = $request->get_param( 'title' );
+
+		if ( isset( $assignable['name'] ) ) {
+			$assignable['name'] = sanitize_title( $assignable['name'] );
 		}
-		if ( $request->has_param( 'path' ) ) {
-			$gallery->path = $request->get_param( 'path' );
+
+		foreach ( $assignable as $key => $value ) {
+			$gallery->$key = $value;
 		}
-		if ( $request->has_param( 'author' ) ) {
-			$gallery->author = $request->get_param( 'author' );
-		}
-		if ( $request->has_param( 'previewpic' ) ) {
-			$gallery->previewpic = $request->get_param( 'previewpic' );
-		}
-		if ( $request->has_param( 'pageid' ) ) {
-			$gallery->pageid = $request->get_param( 'pageid' );
-		}
-		if ( $request->has_param( 'galdesc' ) ) {
-			$gallery->galdesc = $request->get_param( 'galdesc' );
-		}
-		if ( $request->has_param( 'slug' ) ) {
-			$gallery->slug = $request->get_param( 'slug' );
-		}
-		if ( $request->has_param( 'extras_post_id' ) ) {
-			$gallery->extras_post_id = $request->get_param( 'extras_post_id' );
-		}
+
 		if ( $request->has_param( 'parent_id' ) ) {
 			$gallery->parent_id = $request->get_param( 'parent_id' );
 		}
-		if ( $request->has_param( 'pricelist_id' ) ) {
-			$gallery->pricelist_id = $request->get_param( 'pricelist_id' );
-
+		if ( isset( $assignable['pricelist_id'] ) ) {
 			// Also update the WordPress post meta for ecommerce requirements check
 			if ( $gallery->extras_post_id ) {
-				update_post_meta( $gallery->extras_post_id, 'pricelist_id', $request->get_param( 'pricelist_id' ) );
+				update_post_meta( $gallery->extras_post_id, 'pricelist_id', $assignable['pricelist_id'] );
 			}
-		}
-		if ( $request->has_param( 'display_type' ) ) {
-			$gallery->display_type = $request->get_param( 'display_type' );
 		}
 		if ( $request->has_param( 'display_type_settings' ) ) {
 			$incoming = (array) $request->get_param( 'display_type_settings' );
@@ -873,16 +936,6 @@ class GalleryREST {
 				$gallery->display_type_settings = array_merge( $stored, $incoming );
 			}
 		}
-		if ( $request->has_param( 'external_source' ) ) {
-			$gallery->external_source = $request->get_param( 'external_source' );
-		}
-		if ( $request->has_param( 'is_private' ) ) {
-			$gallery->is_private = (bool) $request->get_param( 'is_private' );
-		}
-		if ( $request->has_param( 'is_ecommerce_enabled' ) ) {
-			$gallery->is_ecommerce_enabled = $request->get_param( 'is_ecommerce_enabled' );
-		}
-
 		try {
 			$mapper->save( $gallery );
 			Transient::flush( 'rest_galleries' );

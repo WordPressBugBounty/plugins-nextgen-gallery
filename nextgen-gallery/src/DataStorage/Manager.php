@@ -350,6 +350,13 @@ class Manager {
 					continue;
 				}
 
+				// extractTo() collapses traversal itself, but core guards both of its own
+				// branches this way and an entry shaped like one is worth naming.
+				if ( 0 !== validate_file( $filename ) ) {
+					$this->collect_skipped_zip_entry( $filename );
+					continue;
+				}
+
 				if ( ! $this->is_allowed_image_extension( $filename ) ) {
 					$this->collect_skipped_zip_entry( $filename );
 					continue;
@@ -372,6 +379,14 @@ class Manager {
 				if ( strpos( $basename, '.' ) === 0 ) {
 					continue;
 				}
+
+				// PclZip reduces no traversal of its own, so an entry named "../x.jpg" would
+				// be written above $dest_path. The extension gate does not catch it.
+				if ( 0 !== validate_file( $zipItem['stored_filename'] ) ) {
+					$this->collect_skipped_zip_entry( $zipItem['stored_filename'] );
+					continue;
+				}
+
 				if ( ! $this->is_allowed_image_extension( $zipItem['stored_filename'] ) ) {
 					$this->collect_skipped_zip_entry( $zipItem['stored_filename'] );
 					continue;
@@ -392,7 +407,20 @@ class Manager {
 				return false;
 			}
 
-			if ( ! $zipObj->extractByIndex( implode( ',', $indexesToExtract ), $dest_path ) ) {
+			/*
+			 * Option form, not the two-argument shorthand: the restriction is only parsed when
+			 * the first variadic argument is an option constant. Second guard behind the
+			 * per-entry check above, so a name that slips past it still cannot escape.
+			 */
+			$extracted = $zipObj->extractByIndex(
+				implode( ',', $indexesToExtract ),
+				PCLZIP_OPT_PATH,
+				$dest_path,
+				PCLZIP_OPT_EXTRACT_DIR_RESTRICTION,
+				$dest_path
+			);
+
+			if ( ! $extracted ) {
 				return false;
 			}
 		}
@@ -3950,6 +3978,65 @@ class Manager {
 		}
 
 		return $retval;
+	}
+
+	/**
+	 * Replaces an imported image's backup with the attachment's untouched original.
+	 *
+	 * WordPress downscales uploads above big_image_size_threshold and serves the
+	 * derivative as the attached file. Importing that derivative keeps thumbnail
+	 * generation cheap, but it must not be what the gallery keeps as its original,
+	 * because the backup is what digital downloads are rendered from.
+	 *
+	 * Copying on disk rather than importing the original directly matters: a large
+	 * original costs its full raster in memory once an image editor opens it, which
+	 * is enough to exhaust a modest memory limit.
+	 *
+	 * Mutates the image's backup metadata; the caller is expected to save it.
+	 *
+	 * @param Image $image         The freshly imported image.
+	 * @param int   $attachment_id The attachment it was imported from.
+	 * @return bool Whether the backup was replaced.
+	 */
+	public function store_attachment_original_as_backup( $image, $attachment_id ) {
+		// The caller is expected to save the entity, so it must hand over the entity
+		// itself rather than an id -- otherwise the metadata written here is dropped.
+		if ( ! is_object( $image ) || ! Settings::get_instance()->get( 'imgBackup', false ) ) {
+			return false;
+		}
+
+		$original = Filesystem::get_attachment_original_abspath( $attachment_id );
+		$attached = get_attached_file( $attachment_id );
+
+		// Nothing to promote when the upload was never downscaled.
+		if ( empty( $original ) || $original === $attached || ! @file_exists( $original ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			return false;
+		}
+
+		$backup_abspath = $this->get_backup_abspath( $image );
+
+		if ( empty( $backup_abspath ) || ! @copy( $original, $backup_abspath ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			return false;
+		}
+
+		$dimensions = @getimagesize( $backup_abspath ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		if ( ! $dimensions ) {
+			return false;
+		}
+
+		if ( empty( $image->meta_data ) || ! is_array( $image->meta_data ) ) {
+			$image->meta_data = [];
+		}
+
+		$image->meta_data['backup'] = [
+			'filename'  => basename( $backup_abspath ),
+			'width'     => $dimensions[0],
+			'height'    => $dimensions[1],
+			'generated' => microtime(),
+		];
+
+		return true;
 	}
 
 	public function get_backup_dimensions( $image ) {

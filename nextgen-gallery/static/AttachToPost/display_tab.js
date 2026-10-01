@@ -952,6 +952,10 @@ jQuery(function($){
                 this.$el.append(new this.ExcludeButtons({
                     entities: this.entities
                 }).render().el);
+                this.$el.append(new this.ManualOrderNotice({
+                    entities: this.entities,
+                    displayed_gallery: this.displayed_gallery
+                }).render().el);
 
                 this.$el.append(this.entity_list);
 
@@ -1008,6 +1012,56 @@ jQuery(function($){
                     value: this.label,
                     type:  'button'
                 });
+                return this;
+            }
+        }),
+
+        // Surfaces the fact that this placement has stopped following the gallery,
+        // and offers the only way back to the gallery's own order from this tab.
+        ManualOrderNotice: Backbone.View.extend({
+            className: 'header_row ngg_manual_order_notice',
+
+            events: {
+                'click a.ngg_use_gallery_order': 'reset_clicked'
+            },
+
+            initialize: function(options) {
+                this.options = options || {};
+                _.each(this.options, function(value, key){
+                    this[key] = value;
+                }, this);
+                this.displayed_gallery.on('change:sortorder', this.render, this);
+            },
+
+            has_manual_order: function(){
+                var sortorder = this.displayed_gallery.get('sortorder');
+                return _.isArray(sortorder) ? sortorder.length > 0 : !!sortorder;
+            },
+
+            reset_clicked: function(e){
+                e.preventDefault();
+                this.displayed_gallery.set('sortorder', []);
+                // 'sortorder' is the gallery's own column and is always one of the
+                // offered sort options, unlike the global setting.
+                this.displayed_gallery.set('order_by', 'sortorder');
+                this.entities.reset();
+            },
+
+            render: function(){
+                this.$el.empty();
+                if (!this.has_manual_order()) {
+                    this.$el.hide();
+                    return this;
+                }
+                this.$el.show();
+                this.$el.append($('<span/>').text(igw_data.i18n.manual_order_active));
+                this.$el.append(
+                    $('<a/>')
+                        .addClass('ngg_use_gallery_order')
+                        .attr('href', '#')
+                        .css('margin-left', '8px')
+                        .text(igw_data.i18n.use_gallery_order)
+                );
                 return this;
             }
         }),
@@ -1141,7 +1195,21 @@ jQuery(function($){
             },
 
             displayed_gallery_order_changed: function(e){
-                this.sortorder_options.findWhere({value: e.get('order_by')}).set('selected', true);
+                // A stored order_by can be a value this list never offers (legacy
+                // settings), and an unguarded findWhere() would throw and take the
+                // rest of the tab down with it.
+                var option = this.sortorder_options.findWhere({value: e.get('order_by')});
+                if (option) {
+                    option.set('selected', true);
+                    return;
+                }
+                // Nothing matches, so drop the old highlight. Leaving it set would
+                // make that button unclickable: it is already selected, so no
+                // change event fires and the handler never runs.
+                this.sortorder_options.each(function(item){
+                    item.set('selected', false, {silent: true});
+                });
+                this.$el.find('a.sortorder').removeClass('selected');
             },
 
 
