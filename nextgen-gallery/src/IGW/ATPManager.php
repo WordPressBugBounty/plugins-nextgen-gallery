@@ -342,16 +342,22 @@ class ATPManager {
 				'photocrati_ajax',
 				'ngg_tinymce_plugin',
 				[
-					'url'   => add_query_arg(
+					'url'      => add_query_arg(
 						'ver',
 						NGG_SCRIPT_VERSION,
 						StaticAssets::get_url( 'AttachToPost/ngg_attach_to_post_tinymce_plugin.js', 'photocrati-attach_to_post#ngg_attach_to_post_tinymce_plugin.js' )
 					),
-					'i18n'  => [
+					'i18n'     => [
 						'button_label' => \__( 'Add NextGEN Gallery', 'nggallery' ),
+						'unverified'   => \__( 'The gallery picker sent a response that could not be verified, so nothing was inserted. Reload the editor and try again, or insert the gallery with a shortcode.', 'nggallery' ),
+						'unexpected'   => \__( 'The gallery picker returned an unexpected result, so nothing was inserted. Select the gallery again, or insert it with a shortcode.', 'nggallery' ),
+						'no_target'    => \__( 'There is no editor to insert the gallery into, so nothing was inserted.', 'nggallery' ),
 					],
-					'name'  => $this->attach_to_post_tinymce_plugin,
-					'nonce' => \wp_create_nonce( 'ngg_attach_to_post_iframe' ),
+					'name'     => $this->attach_to_post_tinymce_plugin,
+					'nonce'    => \wp_create_nonce( 'ngg_attach_to_post_iframe' ),
+					// The message bridge pins the picker's origin to this URL.
+					'igw_url'  => \admin_url( '/?' . NGG_ATTACH_TO_POST_SLUG . '=1' ),
+					'atp_slug' => NGG_ATTACH_TO_POST_SLUG,
 				]
 			);
 		}

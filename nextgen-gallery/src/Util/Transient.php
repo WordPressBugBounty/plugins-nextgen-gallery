@@ -85,21 +85,40 @@ class Transient {
 				// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				$param = @wp_json_encode( $param );
 			}
-			$params = implode( '', $params );
+			unset( $param );
+
+			// Length-prefix each element before joining so two different parameter sets cannot
+			// serialise to the same string: a plain implode( '' ) made ['ab','c'] and ['a','bc']
+			// indistinguishable, letting unrelated galleries share one cache slot.
+			$params = implode(
+				'',
+				array_map(
+					static function ( $param ) {
+						return strlen( (string) $param ) . ':' . $param;
+					},
+					$params
+				)
+			);
 		}
 
 		global $_wp_using_ext_object_cache;
 
 		$group_id = $this->get_group_id( $group );
-		$crc      = str_replace( '-', '_', crc32( $params ) );
+
+		// Derive the key from a cryptographic digest, not crc32(). CRC-32 is a linear
+		// error-detecting code over GF(2), not a hash: for any target key, four chosen suffix
+		// bytes can be solved for directly, so a Contributor could craft a gallery whose key
+		// collides with any other gallery's and poison the shared, visitor-facing render cache.
+		// sha1() truncated to 32 hex characters keeps keys short while making collisions infeasible.
+		$digest = substr( sha1( (string) $params ), 0, 32 );
 
 		// Object-cache sites can't be invalidated via clear()'s wp_options DELETE, so embed a
 		// per-group version in the key; bumping it (see clear()) orphans all prior keys.
 		if ( $_wp_using_ext_object_cache ) {
-			return $group_id . '_v' . $this->get_group_version( $group_id ) . '__' . $crc;
+			return $group_id . '_v' . $this->get_group_version( $group_id ) . '__' . $digest;
 		}
 
-		return $group_id . '__' . $crc;
+		return $group_id . '__' . $digest;
 	}
 
 	/**

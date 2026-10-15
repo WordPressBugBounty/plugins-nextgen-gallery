@@ -38,7 +38,7 @@ if ( ! intval( $ajax_pagination ) ) {
 			$image_count = count( $images );
 			for ( $i = 0; $i < $image_count; $i++ ) {
 				$image                   = $images[ $i ];
-				$thumb_size              = $storage->get_image_dimensions( $image, $thumbnail_size_name );
+				$thumb_size              = $storage->get_image_dimensions_or_default( $image, $thumbnail_size_name );
 				$show_tiktok_play_button = (
 					! empty( $image->meta_data ) &&
 					is_array( $image->meta_data ) &&
@@ -92,12 +92,14 @@ if ( ! intval( $ajax_pagination ) ) {
 									<img<?php echo \Imagely\NGG\Display\GalleryImage::attributes(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- attributes() escapes each attribute with esc_attr(). ?> title="<?php echo esc_attr( \Imagely\NGG\Display\I18N::ngg_plain_text_alt_title_attributes( $image->alttext ) ); ?>"
 										alt="<?php echo esc_attr( \Imagely\NGG\Display\I18N::ngg_plain_text_alt_title_attributes( $image->alttext ) ); ?>"
 										src="<?php echo esc_attr( $storage->get_cache_busted_image_url( $image, $thumbnail_size_name ) ); ?>"
+										<?php if ( $thumb_size ) : ?>
 										width="<?php echo esc_attr( $thumb_size['width'] ); ?>"
 										height="<?php echo esc_attr( $thumb_size['height'] ); ?>"
+										<?php endif; ?>
 										style="max-width:100%;"/>
 								</a>
 								<?php if ( ! isset( $image->hidden ) || ! $image->hidden ) { ?>
-									<span style="max-width: <?php print esc_attr( $thumb_size['width'] ); ?>px">
+									<span<?php echo $thumb_size ? ' style="max-width: ' . esc_attr( $thumb_size['width'] ) . 'px"' : ''; ?>>
 										<?php print \Imagely\NGG\Display\I18N::ngg_decode_sanitized_html_content( $image->description ); // phpcs:ignore ?>
 									</span>
 								<?php } ?>

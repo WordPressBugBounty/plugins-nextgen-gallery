@@ -55,12 +55,12 @@ class SettingsREST {
 				[
 					'methods'             => 'GET',
 					'callback'            => [ self::class, 'get_global_settings' ],
-					'permission_callback' => [ self::class, 'check_read_permission' ],
+					'permission_callback' => [ self::class, 'check_network_permission' ],
 				],
 				[
 					'methods'             => 'PUT',
 					'callback'            => [ self::class, 'update_global_settings' ],
-					'permission_callback' => [ self::class, 'check_edit_permission' ],
+					'permission_callback' => [ self::class, 'check_network_permission' ],
 				],
 			]
 		);
@@ -367,6 +367,22 @@ class SettingsREST {
 	}
 
 	/**
+	 * Check if user has permission to read/write network-wide global settings.
+	 *
+	 * The /settings/global route writes the single network-wide ngg_options row
+	 * (GlobalSettings::save() uses update_site_option()), so it is network-admin
+	 * territory — not the per-site 'NextGEN Change options' capability that
+	 * Installer::set_role_caps() grants to every subsite administrator. Gating
+	 * the write on anything less lets a subsite admin rewrite the shared row and
+	 * flip the flag guarding the capability-remapping route.
+	 *
+	 * @return bool
+	 */
+	public static function check_network_permission() {
+		return is_multisite() ? is_super_admin() : current_user_can( 'manage_options' );
+	}
+
+	/**
 	 * Get all settings
 	 *
 	 * @return \WP_REST_Response
@@ -377,6 +393,8 @@ class SettingsREST {
 	}
 
 	/**
+	 * Validate a gallery-path request value against the galleries root.
+	 *
 	 * @param mixed $gallerypath Raw request value.
 	 * @return true|\WP_Error
 	 */
@@ -479,7 +497,20 @@ class SettingsREST {
 		}
 
 		$new_settings = $request->get_json_params();
-		$settings     = GlobalSettings::get_instance();
+		if ( ! is_array( $new_settings ) ) {
+			$new_settings = [];
+		}
+
+		// Run the same gallery-path validation the sibling /settings route applies,
+		// so the network-wide row cannot be written an out-of-root gallery path.
+		if ( isset( $new_settings['gallerypath'] ) ) {
+			$gallerypath_validation = self::validate_gallerypath_rest_value( $new_settings['gallerypath'] );
+			if ( is_wp_error( $gallerypath_validation ) ) {
+				return $gallerypath_validation;
+			}
+		}
+
+		$settings = GlobalSettings::get_instance();
 
 		foreach ( $new_settings as $key => $value ) {
 			// Security sanitization with context-aware handling
@@ -810,8 +841,8 @@ class SettingsREST {
 				'wmType'    => sanitize_text_field( $watermark_options['wmType'] ?? 'text' ),
 				'wmText'    => sanitize_text_field( $watermark_options['wmText'] ?? 'Preview' ),
 				'wmPos'     => sanitize_text_field( $watermark_options['wmPos'] ?? 'midCenter' ),
-				'wmXpos'    => intval( $watermark_options['wmXpos'] ?? 15 ),
-				'wmYpos'    => intval( $watermark_options['wmYpos'] ?? 5 ),
+				'wmXpos'    => intval( $watermark_options['wmXpos'] ?? 0 ),
+				'wmYpos'    => intval( $watermark_options['wmYpos'] ?? 0 ),
 				'wmPath'    => sanitize_text_field( $final_wm_path ),
 				'wmFont'    => sanitize_text_field( $watermark_options['wmFont'] ?? 'arial.ttf' ),
 				'wmSize'    => intval( $watermark_options['wmSize'] ?? 30 ),

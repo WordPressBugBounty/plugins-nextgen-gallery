@@ -50,11 +50,14 @@ class nggAdmin {
 	 * Creates or recreates a thumbnail
 	 *
 	 * @class nggAdmin
-	 * @param object|int $image Contain all information about the image or the id
+	 * @param object|int   $image Contain all information about the image or the id
+	 * @param integer      $width optional, falls back to the saved thumbnail width
+	 * @param integer      $height optional, falls back to the saved thumbnail height
+	 * @param boolean|null $crop optional, falls back to the saved fixed-dimension setting
 	 * @return string result code
 	 * @since v1.0.0
 	 */
-	public static function create_thumbnail( $image ) {
+	public static function create_thumbnail( $image, $width = 0, $height = 0, $crop = null ) {
 
 		if ( is_object( $image ) ) {
 			if ( isset( $image->id ) ) {
@@ -70,6 +73,19 @@ class nggAdmin {
 			'watermark'  => false,
 			'reflection' => false,
 		];
+
+		// One-off dimensions travel as params, so a caller never has to write them to
+		// the site-wide options to get a single thumbnail at a different size.
+		if ( $width > 0 ) {
+			$params['width'] = (int) $width;
+		}
+		if ( $height > 0 ) {
+			$params['height'] = (int) $height;
+		}
+		if ( null !== $crop ) {
+			$params['crop'] = (bool) $crop;
+		}
+
 		$result = $storage->generate_thumbnail( $image, $params );
 
 		if ( ! $result ) {
@@ -374,6 +390,16 @@ class nggAdmin {
 				// get the caption / description field.
 				$description = empty( $meta['caption'] ) ? $image->description : $meta['caption'];
 
+				// SECURITY (#1110): IPTC title/caption are attacker-controllable file
+				// metadata and were written to nggpictures.alttext/description with a raw
+				// prepared UPDATE below, bypassing the sanitisation every other write path
+				// applies. The stored value later reaches a JS innerHTML sink in the
+				// Shutter lightbox and executes for any visitor. Run both through the same
+				// I18N sanitiser the normal admin save path (update_pictures()) uses, so an
+				// imported value is neutralised identically to a hand-edited one.
+				$alttext     = \Imagely\NGG\Display\I18N::ngg_sanitize_text_alt_title_desc( $alttext );
+				$description = \Imagely\NGG\Display\I18N::ngg_sanitize_text_alt_title_desc( $description );
+
 				// get the file date/time from exif.
 				$timestamp = $meta['timestamp'];
 
@@ -592,20 +618,7 @@ class nggAdmin {
 	 * @return bool $result
 	 */
 	public static function can_manage_this_gallery( $check_ID ) {
-
-		global $user_ID, $wp_roles;
-
-		// phpcs:ignore WordPress.WP.Capabilities.Unknown
-		if ( ! current_user_can( 'NextGEN Manage others gallery' ) ) {
-			// get the current user ID.
-			wp_get_current_user();
-
-			if ( $user_ID != $check_ID ) {
-				return false;
-			}
-		}
-
-		return true;
+		return \Imagely\NGG\Util\Security::can_manage_owned( $check_ID, 'nextgen_edit_gallery' );
 	}
 
 	/**

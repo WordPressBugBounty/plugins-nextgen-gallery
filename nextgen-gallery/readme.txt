@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.5.2
+Stable tag: 4.5.3
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,43 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.5.3 - 10.15.2026 =
+* Fixed: Security hardening on image imports, so title and caption text stored inside an image's own metadata can no longer inject scripts into the gallery and lightbox. We recommend updating.
+* Fixed: Security hardening on the Media RSS feed and the admin album picker, so gallery and album text can no longer inject scripts into those screens. We recommend updating.
+* Fixed: Security hardening on the legacy AJAX endpoint, so it no longer returns a logged-in administrator's session cookies to any script on the page and can no longer be driven into an endless loop that exhausts the server. We recommend updating.
+* Fixed: Security hardening on gallery shortcodes, so a shortcode attribute can no longer point the renderer at an arbitrary file on the server or overwrite the display settings it is rendering with. We recommend updating.
+* Fixed: Security hardening on image and gallery file paths, so specially crafted paths can no longer reach the filesystem checks that resolve them. We recommend updating.
+* Fixed: Security hardening on images already stored with a double file extension, which are now renamed on upgrade so they display again instead of being refused on every page load. We recommend updating.
+* Fixed: Security hardening on ZIP imports, so hidden files and macOS archive artefacts are skipped instead of being imported as images. We recommend updating.
+* Fixed: Gallery and album permissions are now checked the same way everywhere - REST, the legacy admin screens, XML-RPC and the Lightroom queue - so a user who no longer has permission to manage a gallery is no longer offered an edit that fails on save.
+* Fixed: Album ownership is now enforced on the XML-RPC and Lightroom publishing paths, matching the rest of the plugin.
+* Fixed: Two REST routes accepted the wrong level of permission: network settings could be changed by a single-site administrator, and notification settings had no permission check at all.
+* Fixed: The thumbnail and bulk-resize REST routes no longer change your site-wide image dimension settings as a side effect.
+* Fixed: Gallery display caching now uses a collision-free key, so one gallery can no longer be served the cached output of another.
+* Fixed: The XML sitemap no longer lists gallery images that are hidden from your visitors.
+* Fixed: The eCommerce screens are now shown only to full administrators, since every request behind them already requires that level of access.
+* Fixed: Gallery URLs with extra text after the gallery slug now return a proper 404 instead of a page, which keeps search engines from crawling an unlimited number of invalid gallery addresses.
+* Fixed: Image URLs broke on WordPress installations in a subfolder, producing addresses such as "wp/-content".
+* Fixed: Related Images thumbnails rendered with an empty image source and showed nothing.
+* Fixed: "Insert Gallery" failed with a security error in the block editor on some setups.
+* Fixed: Uploading and creating galleries failed on sites where the admin screen is embedded in another page, such as some hosting dashboards.
+* Fixed: Closing the lightbox while an image was still animating could leave the page locked and unscrollable.
+* Fixed: Thumbnail views could produce PHP warnings when a gallery had no thumbnail size set.
+* Fixed: The watermark X and Y offset fields were ignored for the centre and middle positions and are now applied.
+* Fixed: Pressing Enter in the legacy gallery editor's settings no longer creates a new page and re-links the gallery.
+* Fixed: The album preview's "first image" fallback never found an image, so albums could display without a cover.
+* Fixed: An album that contains itself, directly or through another album, no longer crashes the page when the album renders.
+* Fixed: Bulk actions no longer drop images you selected on other pages of the image list.
+* Fixed: Images uploaded at the same time are now given distinct positions, so a gallery's manual order is no longer scrambled by concurrent uploads.
+* Fixed: A failure part-way through an image import - a full disk, a permissions problem or a corrupt source file - now rolls the image back and reports which step failed, instead of leaving a half-imported image behind.
+* Fixed: A single unrepairable image no longer blocks every image queued behind it during an upgrade.
+* Fixed: Gallery search no longer breaks on search terms containing reserved characters such as "&" or "#".
+* Fixed: Album links were rewritten incorrectly on pages where another gallery rendered first.
+* Fixed: A bulk pricelist-item creation that only partly succeeded reported plain success; failures are now reported back.
+* Fixed: Regenerating translation files dropped all admin interface strings, leaving around 380 strings untranslatable.
+* Improved: Resizing no longer re-encodes full-size JPEGs whose dimensions are already correct, preserving image quality.
+* Improved: The "Add New Gallery" uploader previews selected images as small thumbnails instead of decoding every full-resolution original, making the screen far faster with large uploads.
 
 = 4.5.2 - 10.01.2026 =
 * Fixed: Security hardening on ZIP imports, so an archive can no longer write files outside the gallery folder on servers that use the fallback unzip method. We recommend updating.

@@ -138,7 +138,8 @@ class ImageOperationsREST {
 					],
 					'fix_dimension' => [
 						'type'        => 'boolean',
-						'default'     => false,
+						// No default: the handler has to tell "omitted" from "false" so that
+						// omitting it keeps the saved cropping setting.
 						'description' => 'Whether to ignore aspect ratio (true) or maintain it (false)',
 					],
 				],
@@ -652,35 +653,23 @@ class ImageOperationsREST {
 		$height        = $request->get_param( 'height' );
 		$fix_dimension = $request->get_param( 'fix_dimension' );
 
+		// Dimensions go straight to the generator: round-tripping them through the
+		// site-wide options would write a setting the options capability governs.
+		// A request that omits fix_dimension leaves crop null so the generator keeps
+		// using the saved setting, rather than being told not to crop.
+		$crop = ( null === $fix_dimension ) ? null : (bool) $fix_dimension;
+
 		try {
-			// If custom parameters are provided, temporarily update the global settings
-			$original_options = null;
-			if ( $width || $height || $fix_dimension !== null ) {
-				$ngg_options      = get_option( 'ngg_options', [] );
-				$original_options = $ngg_options;
+			$result = \nggAdmin::create_thumbnail( $image_id, (int) $width, (int) $height, $crop );
 
-				if ( $width ) {
-					$ngg_options['thumbwidth'] = $width;
-				}
-				if ( $height ) {
-					$ngg_options['thumbheight'] = $height;
-				}
-				// Always set fix_dimension if it's provided (even if false)
-				if ( $fix_dimension !== null ) {
-					$ngg_options['thumbfix'] = $fix_dimension ? 1 : 0;
-				}
+			// The generator reports failure by returning its error message, which is
+			// truthy, so the success marker has to be compared exactly.
+			if ( '1' === $result ) {
+				// Matches the sibling operations in this class: the thumbnail is rebuilt
+				// under thumbs/, and the dynamic derivatives keep serving the old size
+				// until the gallery's cache is dropped.
+				StorageManager::get_instance()->flush_image_cache( $image_id );
 
-				update_option( 'ngg_options', $ngg_options );
-			}
-
-			$result = \nggAdmin::create_thumbnail( $image_id );
-
-			// Restore original settings if they were modified
-			if ( $original_options !== null ) {
-				update_option( 'ngg_options', $original_options );
-			}
-
-			if ( $result ) {
 				return new WP_REST_Response(
 					[
 						'message' => __( 'Thumbnail created successfully', 'nggallery' ),
@@ -690,15 +679,10 @@ class ImageOperationsREST {
 
 			return new WP_Error(
 				'thumbnail_creation_failed',
-				__( 'Failed to create thumbnail', 'nggallery' ),
+				is_string( $result ) ? $result : __( 'Failed to create thumbnail', 'nggallery' ),
 				[ 'status' => 500 ]
 			);
 		} catch ( \Exception $e ) {
-			// Restore original settings in case of exception
-			if ( isset( $original_options ) && $original_options !== null ) {
-				update_option( 'ngg_options', $original_options );
-			}
-
 			return new WP_Error(
 				'thumbnail_creation_failed',
 				$e->getMessage(),
@@ -719,7 +703,8 @@ class ImageOperationsREST {
 		try {
 			$result = \nggAdmin::resize_image( $image_id );
 
-			if ( $result ) {
+			// resize_image() returns '1' on success and a translated error string on failure.
+			if ( '1' === $result ) {
 				$storage = StorageManager::get_instance();
 				$storage->flush_image_cache( $image_id );
 
@@ -732,7 +717,7 @@ class ImageOperationsREST {
 
 			return new WP_Error(
 				'resize_failed',
-				__( 'Failed to resize image', 'nggallery' ),
+				is_string( $result ) && '' !== $result ? $result : __( 'Failed to resize image', 'nggallery' ),
 				[ 'status' => 500 ]
 			);
 		} catch ( \Exception $e ) {
@@ -920,22 +905,8 @@ class ImageOperationsREST {
 		$resize_width  = $width > 0 ? $width : $settings->get( 'imgWidth' );
 		$resize_height = $height > 0 ? $height : $settings->get( 'imgHeight' );
 
-		// Snapshot the option so a per-request width/height override is restored after this call instead of persisting as the site default.
-		$original_ngg_options    = null;
-		$ngg_options_was_changed = false;
-		if ( $width > 0 || $height > 0 ) {
-			$original_ngg_options = get_option( 'ngg_options', [] );
-			$ngg_options          = is_array( $original_ngg_options ) ? $original_ngg_options : [];
-			if ( $width > 0 ) {
-				$ngg_options['imgWidth'] = $resize_width;
-			}
-			if ( $height > 0 ) {
-				$ngg_options['imgHeight'] = $resize_height;
-			}
-			update_option( 'ngg_options', $ngg_options );
-			$ngg_options_was_changed = true;
-		}
-
+		// Dimensions are passed to each resize call below, so this handler never writes
+		// them to the site-wide options and no snapshot has to survive a mid-loop fatal.
 		try {
 			// Process each image
 			foreach ( $image_ids as $image_id ) {
@@ -1028,18 +999,9 @@ class ImageOperationsREST {
 				$status = 500; // Complete failure
 			}
 
-			if ( $ngg_options_was_changed ) {
-				update_option( 'ngg_options', $original_ngg_options );
-			}
-
 			return new WP_REST_Response( $response_data, $status );
 
 		} catch ( \Exception $e ) {
-			// Mirror the success-path restore so a mid-loop failure does not leave the site default overwritten.
-			if ( $ngg_options_was_changed ) {
-				update_option( 'ngg_options', $original_ngg_options );
-			}
-
 			return new WP_Error(
 				'bulk_resize_failed',
 				sprintf(
@@ -1367,14 +1329,15 @@ class ImageOperationsREST {
 
 			// Copy all valid images at once using the storage manager
 			if ( ! empty( $valid_images ) ) {
+				// Keyed by source image id, not position - a skipped source shifts nothing.
 				$copied_image_ids = $storage->copy_images( $valid_images, $destination_gallery_id );
 
 				// Mark successful copies
-				foreach ( $valid_images as $index => $image ) {
-					if ( isset( $copied_image_ids[ $index ] ) && $copied_image_ids[ $index ] > 0 ) {
+				foreach ( $valid_images as $image ) {
+					if ( isset( $copied_image_ids[ $image->pid ] ) && $copied_image_ids[ $image->pid ] > 0 ) {
 						$successful_copies[] = [
 							'original_id' => $image->pid,
-							'new_id'      => $copied_image_ids[ $index ],
+							'new_id'      => $copied_image_ids[ $image->pid ],
 							'message'     => __( 'Image copied successfully', 'nggallery' ),
 						];
 					} else {
@@ -1518,14 +1481,15 @@ class ImageOperationsREST {
 
 			// Move all valid images at once using the storage manager
 			if ( ! empty( $valid_images ) ) {
+				// Keyed by source image id, not position - a skipped source shifts nothing.
 				$moved_image_ids = $storage->move_images( $valid_images, $destination_gallery_id );
 
 				// Mark successful moves
-				foreach ( $valid_images as $index => $image ) {
-					if ( isset( $moved_image_ids[ $index ] ) && $moved_image_ids[ $index ] > 0 ) {
+				foreach ( $valid_images as $image ) {
+					if ( isset( $moved_image_ids[ $image->pid ] ) && $moved_image_ids[ $image->pid ] > 0 ) {
 						$successful_moves[] = [
 							'original_id' => $image->pid,
-							'new_id'      => $moved_image_ids[ $index ],
+							'new_id'      => $moved_image_ids[ $image->pid ],
 							'message'     => __( 'Image moved successfully', 'nggallery' ),
 						];
 					} else {

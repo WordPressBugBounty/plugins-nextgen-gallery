@@ -2568,13 +2568,24 @@ class C_Gallery_Storage extends C_Component
     public function generate_resized_image($image, $save = true)
     {
         $image_abspath = $this->object->get_image_abspath($image, 'full');
-        $generated = $this->object->generate_image_clone($image_abspath, $image_abspath, $this->object->get_image_size_params($image, 'full'));
+        $params = $this->object->get_image_size_params($image, 'full');
+        // Re-encoding at unchanged dimensions only costs JPEG quality, so leave the file untouched.
+        $storage_manager = \Imagely\NGG\DataStorage\Manager::get_instance();
+        if (!$storage_manager->is_resize_needed($image_abspath, $params)) {
+            $storage_manager->sync_unresized_image_metadata($image_abspath);
+            if ($save) {
+                $this->object->update_image_dimension_metadata($image, $image_abspath);
+            }
+            return true;
+        }
+        $generated = $this->object->generate_image_clone($image_abspath, $image_abspath, $params);
         if ($generated && $save) {
             $this->object->update_image_dimension_metadata($image, $image_abspath);
         }
         if ($generated) {
             $generated->destruct();
         }
+        return (bool) $generated;
     }
     public function update_image_dimension_metadata($image, $image_abspath)
     {
@@ -3336,7 +3347,9 @@ class C_Gallery_Storage extends C_Component
      *
      * @param C_Image[]|int[] $images
      * @param C_Gallery|int   $dst_gallery
-     * @return int[]
+     * @return int[] New image id, keyed by the id of the source image that produced it, matching
+     *               the modern Manager's copy_images(). A source that failed to copy is absent as
+     *               a key, so callers must check by source id rather than by position.
      */
     public function copy_images($images, $dst_gallery)
     {
@@ -3387,8 +3400,9 @@ class C_Gallery_Storage extends C_Component
                             @copy($old_abspath, $new_abspath);
                         }
                     }
-                    // Mark as done
-                    $retval[] = $new_image_id;
+                    // Mark as done. Keyed by the source id so a caller can tell which
+                    // specific images copied without relying on position.
+                    $retval[$image->pid] = $new_image_id;
                 }
             }
         }
@@ -3403,10 +3417,17 @@ class C_Gallery_Storage extends C_Component
      */
     public function move_images($images, $gallery)
     {
+        // POPE sets $this->object = $this and nothing overrides copy_images(), so this resolves
+        // to this class's own copy above, not the modern Manager's. Both are keyed by source
+        // image id: a source that isn't a key here failed to copy, and deleting it now would
+        // lose the photo with no copy anywhere.
         $retval = $this->object->copy_images($images, $gallery);
         if ($images) {
-            foreach ($images as $image_id) {
-                $this->object->delete_image($image_id);
+            foreach ($images as $image) {
+                $pid = is_numeric($image) ? $image : $image->pid;
+                if (isset($retval[$pid])) {
+                    $this->object->delete_image($image);
+                }
             }
         }
         return $retval;
@@ -4173,6 +4194,15 @@ class C_Gallery_Storage extends C_Component
                 // type. The PclZip branch below has always skipped them.
                 if ($this->object->is_zip_directory_entry($filename)) {
                     continue;
+                }
+                // A dot-prefixed path segment defeats the glob() size check in upload_zip()
+                // and lets the archive be re-extracted under a public path (see #962). Covers
+                // macOS AppleDouble forks (__MACOSX/._photo.jpg) and dot-directories. Kept in
+                // step with \Imagely\NGG\DataStorage\Manager::extract_zip().
+                foreach (explode('/', $filename) as $zip_path_segment) {
+                    if (strpos($zip_path_segment, '.') === 0) {
+                        continue 2;
+                    }
                 }
                 // extractTo() collapses traversal itself, but core guards both of its own
                 // branches this way and an entry shaped like one is worth naming.
@@ -5276,7 +5306,7 @@ class C_NggLegacy_Thumbnail
                 $dest_y = 0 + $yPOS;
                 break;
             case 'mid':
-                $dest_y = $sourcefile_height / 2 - $watermarkfile_height / 2;
+                $dest_y = (int) (($sourcefile_height - $watermarkfile_height) / 2) + $yPOS;
                 break;
             case 'bot':
                 $dest_y = $sourcefile_height - $watermarkfile_height - $yPOS;
@@ -5290,7 +5320,7 @@ class C_NggLegacy_Thumbnail
                 $dest_x = 0 + $xPOS;
                 break;
             case 'Center':
-                $dest_x = $sourcefile_width / 2 - $watermarkfile_width / 2;
+                $dest_x = (int) (($sourcefile_width - $watermarkfile_width) / 2) + $xPOS;
                 break;
             case 'Right':
                 $dest_x = $sourcefile_width - $watermarkfile_width - $xPOS;
@@ -5299,6 +5329,13 @@ class C_NggLegacy_Thumbnail
                 $dest_x = 0;
                 break;
         }
+        // Offsets nudge the watermark away from its anchor, including on the centred axes.
+        // Bound each coordinate to its own anchor range so an offset cannot push the watermark
+        // off the canvas, while a watermark larger than the canvas keeps overflowing from centre.
+        $x_edge = $sourcefile_width - $watermarkfile_width;
+        $y_edge = $sourcefile_height - $watermarkfile_height;
+        $dest_x = min(max((int) $dest_x, min(0, $x_edge)), max(0, $x_edge));
+        $dest_y = min(max((int) $dest_y, min(0, $y_edge)), max(0, $y_edge));
         // if a gif, we have to upsample it to a truecolor image
         if ($this->format == 'GIF') {
             $tempimage = imagecreatetruecolor($sourcefile_width, $sourcefile_height);
@@ -5443,6 +5480,10 @@ class Mixin_GalleryStorage_Base_Dynamic extends Mixin
              * dot-delimited segment, which is the only one of the two that catches a
              * legacy "photo.php_.jpg": its final extension is "jpg", so the extension
              * gate admits it.
+             *
+             * Rows already in that shape are rewritten by
+             * Imagely\NGG\Migrations\NeutralizeStoredExecutableFilenames on an admin request. This
+             * copy can be reached before that has run, where the refusal is still correct.
              */
             $refusal_reason = null;
             if (!$existing_image_abpath) {
@@ -5450,7 +5491,8 @@ class Mixin_GalleryStorage_Base_Dynamic extends Mixin
             } elseif (!\Imagely\NGG\DataStorage\Manager::get_instance()->is_safe_generated_image_path($existing_image_abpath, $filename)) {
                 $refusal_reason = sprintf('the destination "%s" is outside the gallery directory or is not a safe image target', $existing_image_abpath);
             } elseif (\Imagely\NGG\Util\Security::has_php_executable_extension($existing_image_abpath)) {
-                $refusal_reason = sprintf('the stored file name "%s" carries a PHP script extension; rename it in the gallery folder to restore its thumbnails', wp_basename($existing_image_abpath));
+                // Text taken from the modern class rather than repeated, so the two cannot drift.
+                $refusal_reason = sprintf(\Imagely\NGG\DataStorage\Manager::REFUSAL_PHP_EXTENSION_NOTICE, wp_basename($existing_image_abpath));
             }
             if (null !== $refusal_reason) {
                 /*

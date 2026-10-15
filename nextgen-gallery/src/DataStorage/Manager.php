@@ -10,7 +10,7 @@ use Imagely\NGG\Display\I18N;
 use Imagely\NGG\Display\StaticAssets;
 use Imagely\NGG\IGW\EventPublisher;
 use Imagely\NGG\Settings\Settings;
-use Imagely\NGG\Util\{ Filesystem, Router, Security };
+use Imagely\NGG\Util\{ Filesystem, Router, Sanitization, Security };
 
 /**
  * Data storage manager.
@@ -60,6 +60,13 @@ class Manager {
 	const REFUSAL_GALLERY_OUTSIDE = 'gallery_outside_locations';
 	const REFUSAL_MASS_ASSIGNMENT = 'mass_assignment';
 	const REFUSAL_DIRS_DEGENERATE = 'deletion_dirs_degenerate';
+	const REFUSAL_URL_UNMAPPED    = 'url_unmapped';
+
+	/**
+	 * Refusal text shared by both copies of generate_image_size(), so the mirrored pair cannot
+	 * drift. Takes the basename.
+	 */
+	const REFUSAL_PHP_EXTENSION_NOTICE = 'the stored file name "%s" carries a PHP script extension. Migrations\NeutralizeStoredExecutableFilenames renames these when the plugin upgrades, so a refusal that persists means that rename was declined - usually because the neutralized name is already taken in the same gallery - and the file needs renaming in the gallery folder by hand';
 
 	/**
 	 * The refusal kinds that are rate-limited when WP_DEBUG is off.
@@ -79,6 +86,7 @@ class Manager {
 		self::REFUSAL_TRIGGER_HANDLER,
 		self::REFUSAL_GALLERY_OUTSIDE,
 		self::REFUSAL_DIRS_DEGENERATE,
+		self::REFUSAL_URL_UNMAPPED,
 	];
 
 	/**
@@ -199,6 +207,15 @@ class Manager {
 	 * @var array
 	 */
 	protected static $image_url_cache = [];
+
+	/**
+	 * Directories whose public URL is known, canonicalized and keyed by the set of directories
+	 * they were resolved from, so the realpath() walk runs once per configuration rather than
+	 * once per image per size.
+	 *
+	 * @var array
+	 */
+	protected static $url_anchors_cache = [];
 
 	public function __construct() {
 		$this->gallery_mapper = GalleryMapper::get_instance();
@@ -348,6 +365,23 @@ class Manager {
 				 */
 				if ( $this->is_zip_directory_entry( $filename ) ) {
 					continue;
+				}
+
+				/*
+				 * A dot-prefixed path segment defeats the glob() size check in upload_zip()
+				 * that decides where the archive lands: glob() does not match dotfiles, so a
+				 * dotfile-only (or dot-directory) payload counts as zero bytes and the whole
+				 * archive is re-extracted under a public wp-content/uploads path (see #962).
+				 * This also covers macOS AppleDouble forks (__MACOSX/._photo.jpg). Testing
+				 * every segment, not just basename(), catches a dot-directory like
+				 * .photos/img.jpg. Skip silently, as the #962 fix and the PclZip branch below
+				 * do; routing these to the refusal channel would mislabel resource forks as
+				 * "not an accepted image format".
+				 */
+				foreach ( explode( '/', $filename ) as $zip_path_segment ) {
+					if ( strpos( $zip_path_segment, '.' ) === 0 ) {
+						continue 2;
+					}
 				}
 
 				// extractTo() collapses traversal itself, but core guards both of its own
@@ -885,10 +919,26 @@ class Manager {
 
 				$exif_iptc = EXIFWriter::read_metadata( $exif_abspath );
 
-				$thumbnail->save( $destpath, $quality );
+				// LegacyThumbnail::$error is sticky - checkMemoryForData() can latch it during
+				// resize() (called above, before any of this) whether or not this specific
+				// save() write goes on to succeed, and save() has no way to tell the two apart
+				// on its own. Only trust "not saved" as this call's own failure when nothing had
+				// already set the flag before we got here.
+				$errored_before_save = $thumbnail->error;
+				$saved               = $thumbnail->save( $destpath, $quality );
 
-				// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-				@EXIFWriter::write_metadata( $destpath, $exif_iptc );
+				if ( ! $saved && ! $errored_before_save ) {
+					// A failure that appeared during this save() call - a genuine write failure
+					// (e.g. a disk-full ImageJpeg()/ImagePng() call) - don't report an object
+					// whose file was never actually written as a successfully generated clone.
+					$thumbnail->destruct();
+					$thumbnail = null;
+				} else {
+					// Either it saved fine, or the flag predates this call and the file it wrote
+					// (unresized/unrotated, but real) is still on disk either way.
+					// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					@EXIFWriter::write_metadata( $destpath, $exif_iptc );
+				}
 			}
 		}
 
@@ -1267,14 +1317,27 @@ class Manager {
 		return $result;
 	}
 
+	/**
+	 * Resizes the full-size image in place to the configured maximum dimensions.
+	 *
+	 * @param Image $image
+	 * @param bool  $save Whether to persist the resulting dimension metadata.
+	 * @return bool False only when a needed resize failed to write.
+	 */
 	public function generate_resized_image( $image, $save = true ) {
 		$image_abspath = $this->get_image_abspath( $image, 'full' );
+		$params        = $this->get_image_size_params( $image, 'full' );
 
-		$generated = $this->generate_image_clone(
-			$image_abspath,
-			$image_abspath,
-			$this->get_image_size_params( $image, 'full' )
-		);
+		// Re-encoding at unchanged dimensions only costs JPEG quality, so leave the pixels untouched.
+		if ( ! $this->is_resize_needed( $image_abspath, $params ) ) {
+			$this->sync_unresized_image_metadata( $image_abspath );
+			if ( $save ) {
+				$this->update_image_dimension_metadata( $image, $image_abspath );
+			}
+			return true;
+		}
+
+		$generated = $this->generate_image_clone( $image_abspath, $image_abspath, $params );
 
 		if ( $generated && $save ) {
 			$this->update_image_dimension_metadata( $image, $image_abspath );
@@ -1283,6 +1346,72 @@ class Manager {
 		if ( $generated ) {
 			$generated->destruct();
 		}
+
+		return (bool) $generated;
+	}
+
+	/**
+	 * Whether cloning an image with the given params would change it.
+	 *
+	 * The clone never upscales, so an image already within the requested bounds only changes when
+	 * another transform is requested alongside the resize, or a JPEG quality below the source's own.
+	 *
+	 * @param string $image_abspath
+	 * @param array  $params
+	 * @return bool
+	 */
+	public function is_resize_needed( $image_abspath, $params ) {
+		foreach ( [ 'crop', 'crop_frame', 'watermark', 'reflection', 'rotation', 'flip', 'type' ] as $transform ) {
+			if ( ! empty( $params[ $transform ] ) ) {
+				return true;
+			}
+		}
+
+		$dimensions = $image_abspath ? @getimagesize( $image_abspath ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( ! $dimensions ) {
+			return true;
+		}
+
+		$width  = empty( $params['width'] ) ? 0 : (int) $params['width'];
+		$height = empty( $params['height'] ) ? 0 : (int) $params['height'];
+
+		if ( ( $width && $dimensions[0] > $width ) || ( $height && $dimensions[1] > $height ) ) {
+			return true;
+		}
+
+		// Only JPEG saves honour the quality setting. The clone encodes at min( requested, estimated
+		// source quality ), so a re-encode changes compression only when the requested quality is lower.
+		$requested_quality = isset( $params['quality'] ) ? (int) $params['quality'] : 100;
+		if ( $requested_quality < 100 && isset( $dimensions['mime'] ) && 'image/jpeg' === $dimensions['mime'] ) {
+			$probe          = $this->calculate_image_clone_result( $image_abspath, $image_abspath, array_merge( $params, [ 'quality' => 100 ] ) );
+			$source_quality = ( $probe && isset( $probe['quality'] ) ) ? (int) $probe['quality'] : 100;
+
+			return $requested_quality < $source_quality;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Applies the metadata step of generate_image_clone() to an image whose re-encode was skipped.
+	 *
+	 * The clone always rewrote EXIF/IPTC from the backup and forced Orientation to 1, which is the
+	 * only correction orientations correct_exif_rotation() leaves alone (mirrored/transposed) get.
+	 * PEL rewrites only the metadata segments, so the compressed image data is kept as-is.
+	 *
+	 * @param string $image_abspath
+	 */
+	public function sync_unresized_image_metadata( $image_abspath ) {
+		if ( ! $image_abspath || ! EXIFWriter::is_jpeg_file( $image_abspath ) ) {
+			return;
+		}
+
+		$backup_path  = $image_abspath . '_backup';
+		$exif_abspath = @file_exists( $backup_path ) ? $backup_path : $image_abspath; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		@EXIFWriter::write_metadata( $image_abspath, EXIFWriter::read_metadata( $exif_abspath ) );
+		clearstatcache( true, $image_abspath );
 	}
 
 	public function update_image_dimension_metadata( $image, $image_abspath ) {
@@ -1364,30 +1493,32 @@ class Manager {
 	 *
 	 * @param $image
 	 * @param bool  $save
+	 * @return bool True if no rotation was needed, or a needed rotation was applied; false only
+	 *              when a rotation was attempted and the write failed.
 	 */
 	public function correct_exif_rotation( $image, $save = true ) {
 		$image_abspath = $this->get_image_abspath( $image, 'full' );
 
 		if ( ! EXIFWriter::is_jpeg_file( $image_abspath ) ) {
-			return;
+			return true;
 		}
 
 		// This method is necessary.
 		if ( ! function_exists( 'exif_read_data' ) ) {
-			return;
+			return true;
 		}
 
 		// We only need to continue if the Orientation tag is set.
 		$exif = @exif_read_data( $image_abspath, 'exif' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( empty( $exif['Orientation'] ) || 1 === (int) $exif['Orientation'] ) {
-			return;
+			return true;
 		}
 
 		// Only orientations 3/6/8 are pure rotations. Others (2, 4, 5, 7) involve flips
 		// which we don't support; skip them to avoid unnecessary image cloning.
 		$orientation = (int) $exif['Orientation'];
 		if ( ! in_array( $orientation, [ 3, 6, 8 ], true ) ) {
-			return;
+			return true;
 		}
 
 		if ( function_exists( 'wp_raise_memory_limit' ) ) {
@@ -1398,7 +1529,7 @@ class Manager {
 			if ( $save ) {
 				$this->update_image_dimension_metadata( $image, $image_abspath );
 			}
-			return;
+			return true;
 		}
 
 		$degree = 0;
@@ -1428,6 +1559,8 @@ class Manager {
 		if ( $generated ) {
 			$generated->destruct();
 		}
+
+		return (bool) $generated;
 	}
 
 	/**
@@ -1516,8 +1649,9 @@ class Manager {
 				$retval = preg_replace( '#^/?wp-content#', '', $retval );
 			}
 
-			// Ensure that the path is absolute.
-			if ( strpos( $retval, $gallery_root ) !== 0 ) {
+			// Ensure that the path is absolute. Tested on whole path segments, so a directory
+			// that merely starts with the root's name is not mistaken for the root itself.
+			if ( ! $this->is_absolute_gallery_path( $retval ) ) {
 
 				// path_join() behaves funny - if the second argument starts with a slash,
 				// it won't join the two paths together.
@@ -1556,7 +1690,52 @@ class Manager {
 			return $this->get_gallery_abspath( $gallery );
 		}
 
-		return str_replace( $this->get_gallery_root(), '', $this->get_gallery_abspath( $gallery ) );
+		$abspath = $this->get_gallery_abspath( $gallery );
+
+		// Only strip the root off a whole path segment; an unanchored replace cut into the first
+		// folder name of a sibling directory. A path outside the root is returned as it stands.
+		if ( 0 === strpos( (string) $abspath, trailingslashit( $root ) ) ) {
+			return substr( $abspath, strlen( $root ) );
+		}
+
+		return $abspath;
+	}
+
+	/**
+	 * Whether a stored gallery path already points inside a known gallery location, and so needs
+	 * no joining onto the gallery root.
+	 *
+	 * @param string $path A gallery path as stored, absolute or relative.
+	 * @return bool
+	 */
+	protected function is_absolute_gallery_path( $path ) {
+		$path = wp_normalize_path( (string) $path );
+
+		// Absoluteness is a lexical question, so it is answered lexically. canonicalize_path()
+		// returns '' both for a relative path and for a failed realpath(), and reading the
+		// second as "relative" would join the root onto a path that already has one - on
+		// exactly the open_basedir / chroot / WP VIP / IIS hosts is_path_contained() documents
+		// a lexical fallback for.
+		if ( '' === $path || ( '/' !== $path[0] && ! preg_match( '#^[A-Za-z]:/#', $path ) ) ) {
+			return false;
+		}
+
+		// Under the gallery root, on a path boundary. Through path_contains() rather than a
+		// fourth inline copy of it: that one is already purely lexical, so it costs no
+		// filesystem access here, and it carries the degenerate-base guard (96fe6832) that an
+		// inline test would drop on a host whose document root is "/".
+		if ( $this->path_contains( wp_normalize_path( $this->get_gallery_root() ), $path ) ) {
+			return true;
+		}
+
+		// Otherwise it has to be a known gallery location, which is what admits a path stored
+		// beside the root. Same lexical fallback as is_path_contained() for the hosts above.
+		$canonical = $this->canonicalize_path( $path );
+		if ( '' === $canonical ) {
+			$canonical = $this->collapse_path_traversal( $path );
+		}
+
+		return '' !== $canonical && $this->is_within_gallery_locations( rtrim( $canonical, '/' ) );
 	}
 
 	/**
@@ -1923,51 +2102,190 @@ class Manager {
 							'width'  => $new_dims['real_width'],
 							'height' => $new_dims['real_height'],
 						];
-					} elseif ( isset( $image->meta_data['full']['width'], $image->meta_data['full']['height'] ) ) {
+					} else {
 						// CDN/offload: local file absent, so getimagesize() cannot run. Derive dimensions
 						// from stored full-size meta instead so dynamic-thumbnail displays (e.g. Pro Mosaic)
 						// don't collapse to 0×0. Mirrors get_computed_image_url()'s meta-derived fallback.
-						$fw     = (int) $image->meta_data['full']['width'];
-						$fh     = (int) $image->meta_data['full']['height'];
-						$params = $this->get_image_size_params( $image, $size );
-						$bw     = ! empty( $params['width'] ) ? (int) $params['width'] : 0;
-						$bh     = ! empty( $params['height'] ) ? (int) $params['height'] : 0;
-
-						if ( ! empty( $params['crop'] ) && $bw && $bh ) {
-							$retval = [
-								'width'  => $bw,
-								'height' => $bh,
-							];
-						} elseif ( $fw && $fh ) {
-							$ratio = $fw / $fh;
-							if ( $bw && $bh ) {
-								$w = $bw;
-								$h = (int) round( $bw / $ratio );
-								if ( $h > $bh ) {
-									$h = $bh;
-									$w = (int) round( $bh * $ratio );
-								}
-							} elseif ( $bw ) {
-								$w = $bw;
-								$h = (int) round( $bw / $ratio );
-							} elseif ( $bh ) {
-								$h = $bh;
-								$w = (int) round( $bh * $ratio );
-							} else {
-								$w = $fw;
-								$h = $fh;
-							}
-							$retval = [
-								'width'  => $w,
-								'height' => $h,
-							];
-						}
+						$retval = $this->calculate_dimensions_from_full_meta( $image, $size );
 					}
 				}
 			}
 		}
 
 		return $retval;
+	}
+
+	/**
+	 * Gets the dimensions for a particular-sized image, falling back to the dimensions that size
+	 * is configured to render at.
+	 *
+	 * A null return from get_image_dimensions() is legitimate - the stored meta has no entry for
+	 * the size and the sized file cannot be measured - which leaves display templates with
+	 * nothing to print. Callers that need a width and a height should use this instead of
+	 * guarding the null themselves.
+	 *
+	 * @param int|object $image Image entity or image id.
+	 * @param string     $size  Named image size.
+	 * @return null|array Array with 'width' and 'height' keys, or null when nothing resolves them.
+	 */
+	public function get_image_dimensions_or_default( $image, $size = 'full' ) {
+		$dimensions = $this->get_image_dimensions( $image, $size );
+
+		if ( is_array( $dimensions ) && ! empty( $dimensions['width'] ) && ! empty( $dimensions['height'] ) ) {
+			return $dimensions;
+		}
+
+		if ( is_numeric( $image ) ) {
+			$image = $this->image_mapper->find( $image );
+		}
+
+		if ( ! $image ) {
+			return null;
+		}
+
+		$size = $this->normalize_image_size_name( $size );
+		if ( ! $size ) {
+			$size = 'full';
+		}
+
+		list( $original_width, $original_height ) = $this->get_stored_original_dimensions( $image );
+
+		// The original size needs no fitting, since it is the original.
+		if ( 'full' === $size ) {
+			return $original_width && $original_height
+				? [
+					'width'  => $original_width,
+					'height' => $original_height,
+				]
+				: null;
+		}
+
+		$params = $this->get_image_size_params( $image, $size );
+		$box    = [
+			'width'  => ! empty( $params['width'] ) ? (int) $params['width'] : 0,
+			'height' => ! empty( $params['height'] ) ? (int) $params['height'] : 0,
+		];
+
+		// The generator never upscales - calculate_image_clone_result() clamps the requested
+		// size down to the original before cropping or constraining - so the configured size is
+		// only an upper bound on what was actually written out.
+		if ( $original_width && $box['width'] ) {
+			$box['width'] = min( $box['width'], $original_width );
+		}
+
+		if ( $original_height && $box['height'] ) {
+			$box['height'] = min( $box['height'], $original_height );
+		}
+
+		// A cropped size is written out at exactly the dimensions configured for it.
+		if ( ! empty( $params['crop'] ) && $box['width'] && $box['height'] ) {
+			return $box;
+		}
+
+		// Only the original's ratio can say what an uncropped size renders at, so with no stored
+		// dimensions the answer stays unknown. The configured box would be a guess at the ratio,
+		// and a template's width attribute is not overridden by the stylesheet the way its
+		// height is, so a wrong guess would stretch the image rather than just mis-reserve space.
+		return $this->fit_dimensions_to_box( $original_width, $original_height, $box['width'], $box['height'] );
+	}
+
+	/**
+	 * Reads the image's original dimensions out of its stored meta.
+	 *
+	 * They are recorded twice by update_image_dimension_metadata(), under 'full' and at the top
+	 * level, and records written by older versions or left behind by a migration can carry only
+	 * one of the two.
+	 *
+	 * @param object $image Image entity.
+	 * @return array{0: int, 1: int} Width and height, each 0 when unknown.
+	 */
+	private function get_stored_original_dimensions( $image ) {
+		if ( isset( $image->meta_data['full']['width'], $image->meta_data['full']['height'] ) ) {
+			return [ (int) $image->meta_data['full']['width'], (int) $image->meta_data['full']['height'] ];
+		}
+
+		if ( isset( $image->meta_data['width'], $image->meta_data['height'] ) ) {
+			return [ (int) $image->meta_data['width'], (int) $image->meta_data['height'] ];
+		}
+
+		return [ 0, 0 ];
+	}
+
+	/**
+	 * Works out what a named size renders at from the image's stored full-size meta.
+	 *
+	 * Used when the sized file itself cannot be measured, so the original dimensions and the
+	 * parameters configured for the size are all there is to go on.
+	 *
+	 * @param object $image Image entity.
+	 * @param string $size  Named image size.
+	 * @return null|array Array with 'width' and 'height' keys, or null when the original size is unknown.
+	 */
+	private function calculate_dimensions_from_full_meta( $image, $size ) {
+		if ( ! isset( $image->meta_data['full']['width'], $image->meta_data['full']['height'] ) ) {
+			return null;
+		}
+
+		$params = $this->get_image_size_params( $image, $size );
+		$box_w  = ! empty( $params['width'] ) ? (int) $params['width'] : 0;
+		$box_h  = ! empty( $params['height'] ) ? (int) $params['height'] : 0;
+
+		if ( ! empty( $params['crop'] ) && $box_w && $box_h ) {
+			return [
+				'width'  => $box_w,
+				'height' => $box_h,
+			];
+		}
+
+		return $this->fit_dimensions_to_box(
+			(int) $image->meta_data['full']['width'],
+			(int) $image->meta_data['full']['height'],
+			$box_w,
+			$box_h
+		);
+	}
+
+	/**
+	 * Scales the given dimensions to fit inside a box, keeping their ratio.
+	 *
+	 * Either bound may be zero, meaning unconstrained; with neither bound set the dimensions
+	 * are returned as they came in.
+	 *
+	 * @param int $width  Source width.
+	 * @param int $height Source height.
+	 * @param int $box_w  Width bound, or 0.
+	 * @param int $box_h  Height bound, or 0.
+	 * @return null|array Array with 'width' and 'height' keys, or null when the source has no size.
+	 */
+	private function fit_dimensions_to_box( $width, $height, $box_w, $box_h ) {
+		if ( ! $width || ! $height ) {
+			return null;
+		}
+
+		$ratio = $width / $height;
+
+		if ( $box_w && $box_h ) {
+			$w = $box_w;
+			$h = (int) round( $box_w / $ratio );
+			if ( $h > $box_h ) {
+				$h = $box_h;
+				$w = (int) round( $box_h * $ratio );
+			}
+		} elseif ( $box_w ) {
+			$w = $box_w;
+			$h = (int) round( $box_w / $ratio );
+		} elseif ( $box_h ) {
+			$h = $box_h;
+			$w = (int) round( $box_h * $ratio );
+		} else {
+			$w = $width;
+			$h = $height;
+		}
+
+		return [
+			'width'  => $w,
+			'height' => $h,
+		];
 	}
 
 	public function get_image_format_list() {
@@ -2079,27 +2397,155 @@ class Manager {
 
 		// Assuming we have an abspath, we can translate that to a url.
 		if ( $image_abspath ) {
-
-			// Replace the gallery root with the proper url segment.
-			$gallery_root = preg_quote( $this->get_gallery_root(), '#' );
-			$image_uri    = preg_replace(
-				"#^{$gallery_root}#",
-				'',
-				$image_abspath
-			);
-
-			// Url encode each uri segment.
-			$segments  = explode( '/', $image_uri );
-			$segments  = array_map( 'rawurlencode', $segments );
-			$image_uri = preg_replace( '#^/#', '', implode( '/', $segments ) );
-
-			// Join gallery root and image uri.
-			$gallery_root = trailingslashit( NGG_GALLERY_ROOT_TYPE == 'site' ? site_url() : WP_CONTENT_URL );
-			$gallery_root = is_ssl() ? str_replace( 'http:', 'https:', $gallery_root ) : $gallery_root;
-			$retval       = $gallery_root . $image_uri;
+			$retval = $this->image_abspath_to_url( $image_abspath );
 		}
 
 		return $retval;
+	}
+
+	/**
+	 * Turns an absolute image path into a public URL.
+	 *
+	 * The path is made relative to a directory whose URL is known, matched on whole path segments.
+	 * An unanchored strip cut into the first folder name whenever a directory sat beside the
+	 * gallery root under a name beginning with it: "/x/wp" off "/x/wp-content/uploads/..." left
+	 * "-content/uploads/...". Reachable because image paths are canonicalized before they get
+	 * here, so a gallery stored as "../wp-content/uploads/<slug>/" - which long-lived installs
+	 * still hold, from before ".." was rejected in gallery paths - resolves outside the root.
+	 *
+	 * @param string $image_abspath Absolute path of an image file.
+	 * @return string|null Public URL, or null when $image_abspath is empty.
+	 */
+	protected function image_abspath_to_url( $image_abspath ) {
+		$path = wp_normalize_path( (string) $image_abspath );
+
+		if ( '' === $path ) {
+			return null;
+		}
+
+		// The path arrives only lexically canonicalized, so it is compared in both forms against
+		// anchors that carry both - a symlinked uploads or WordPress directory matches one of them.
+		$candidates = [ $path ];
+		$resolved   = $this->canonicalize_path( $path );
+		if ( '' !== $resolved && $resolved !== $path ) {
+			$candidates[] = $resolved;
+		}
+
+		foreach ( $this->get_url_anchors() as $dir => $base_url ) {
+			foreach ( $candidates as $candidate ) {
+				if ( 0 !== strpos( $candidate, $dir ) ) {
+					continue;
+				}
+
+				// Url encode each uri segment.
+				$segments = array_map( 'rawurlencode', explode( '/', substr( $candidate, strlen( $dir ) ) ) );
+				$url      = $base_url . implode( '/', $segments );
+
+				return is_ssl() ? str_replace( 'http:', 'https:', $url ) : $url;
+			}
+		}
+
+		// Throttled, because this runs per image per size on every front-end render. Logged at
+		// all because the fallback below can only produce a working URL by luck, and a wrong
+		// image URL leaves nothing for support to search for. Tags stripped with the newlines
+		// too: the path carries a filename read from the database.
+		$this->log_path_refusal(
+			sprintf(
+				'NextGEN Gallery: %s is not inside any directory whose URL is known; falling back to the gallery root URL',
+				wp_strip_all_tags( $path, true )
+			),
+			self::REFUSAL_URL_UNMAPPED
+		);
+
+		/*
+		 * Last resort: what this function did before it matched on path boundaries - strip the
+		 * root where it is a literal prefix and hang the rest off the gallery root URL.
+		 *
+		 * Only reached by a path no known directory contains: a stream-wrapped uploads base
+		 * (s3://, iu://), or a document root of "/" whose anchor the degenerate-base guard
+		 * drops. Returning null instead would be a new behaviour for those installs - it would
+		 * blank images that currently render, and hand null to the offload filters above and to
+		 * the placeholder substitution in resolve_image_url(), both of which expect a string.
+		 */
+		$root      = wp_normalize_path( rtrim( $this->get_gallery_root(), '/' ) );
+		$remainder = ( '' !== $root && 0 === strpos( $path, $root ) ) ? substr( $path, strlen( $root ) ) : $path;
+		$segments  = array_map( 'rawurlencode', explode( '/', ltrim( $remainder, '/' ) ) );
+		$base_url  = trailingslashit( NGG_GALLERY_ROOT_TYPE === 'site' ? site_url() : WP_CONTENT_URL );
+		$url       = $base_url . implode( '/', $segments );
+
+		return is_ssl() ? str_replace( 'http:', 'https:', $url ) : $url;
+	}
+
+	/**
+	 * Directories whose public URL is known, as a map of trailing-slashed canonical directory to
+	 * trailing-slashed base URL.
+	 *
+	 * The gallery root comes first so a gallery under the configured storage root keeps resolving
+	 * through the gallery root URL exactly as before. Uploads comes before WP_CONTENT_DIR because
+	 * "upload_path" can move uploads out of wp-content, which then does not contain it.
+	 *
+	 * @return array
+	 */
+	protected function get_url_anchors() {
+		$uploads = wp_get_upload_dir();
+		$pairs   = [
+			[
+				$this->get_gallery_root(),
+				NGG_GALLERY_ROOT_TYPE === 'site' ? site_url() : WP_CONTENT_URL,
+			],
+			[
+				isset( $uploads['basedir'] ) ? $uploads['basedir'] : '',
+				isset( $uploads['baseurl'] ) ? $uploads['baseurl'] : '',
+			],
+			[ WP_CONTENT_DIR, WP_CONTENT_URL ],
+			[ ABSPATH, site_url() ],
+		];
+
+		// Keyed on the directories themselves: the uploads base is filterable and switchable at
+		// runtime. Resolving the pairs is cheap; what the cache saves is the realpath() walk.
+		$key = md5( (string) wp_json_encode( $pairs ) );
+
+		if ( isset( self::$url_anchors_cache[ $key ] ) ) {
+			return self::$url_anchors_cache[ $key ];
+		}
+
+		$anchors = [];
+
+		foreach ( $pairs as $pair ) {
+			list( $dir, $url ) = $pair;
+
+			if ( ! is_string( $dir ) || ! is_string( $url ) || '' === trim( $dir ) || '' === trim( $url ) ) {
+				continue;
+			}
+
+			// Three forms per directory. WordPress hands back "upload_path" unresolved
+			// (".../wordpress/../wp-content/uploads"), hence the two canonical ones; the raw form
+			// is what makes a stream-wrapped base ("s3://bucket/uploads") matchable at all, since
+			// both canonicalizers mangle or reject a wrapper while the image path keeps it.
+			foreach ( [ wp_normalize_path( $dir ), Security::canonicalize_path( $dir ), $this->canonicalize_path( $dir ) ] as $canonical ) {
+				if ( ! is_string( $canonical ) || '' === $canonical ) {
+					continue;
+				}
+
+				$canonical = trailingslashit( $canonical );
+
+				// Same guard and prefix pattern as Security::path_is_within(): a directory that
+				// reduces to the filesystem root prefixes every path and would answer for all.
+				$body = preg_replace( '#^(?://[^/]+/|[a-zA-Z]:/|/)#', '', $canonical );
+				if ( '' === rtrim( (string) $body, '/' ) ) {
+					continue;
+				}
+
+				// First anchor to claim a directory keeps it, so the ordering above holds.
+				if ( ! isset( $anchors[ $canonical ] ) ) {
+					$anchors[ $canonical ] = trailingslashit( $url );
+				}
+			}
+		}
+
+		self::$url_anchors_cache[ $key ] = $anchors;
+
+		return $anchors;
 	}
 
 	public function normalize_image_size_name( $size = 'full' ) {
@@ -2367,7 +2813,10 @@ class Manager {
 	 * @param Image[]     $images
 	 * @param Gallery|int $dst_gallery
 	 *
-	 * @return int[]
+	 * @return int[] New image id, keyed by the id of the source image that produced it. A
+	 *               source id that failed to copy is simply absent as a key - callers that
+	 *               need to know what succeeded must check by source id, not by position,
+	 *               since a skipped source would otherwise shift every later id's index.
 	 */
 	public function copy_images( $images, $dst_gallery ) {
 		$retval = [];
@@ -2383,46 +2832,54 @@ class Manager {
 			$image_abspath  = $backup_abspath ? $backup_abspath : $this->get_image_abspath( $image );
 
 			if ( $image_abspath ) {
-				// Import the image; this will copy the main file.
-				$new_image_id = $this->import_image_file( $dst_gallery, $image_abspath, $image->filename );
+				try {
+					// Import the image; this will copy the main file.
+					$new_image_id = $this->import_image_file( $dst_gallery, $image_abspath, $image->filename );
 
-				if ( $new_image_id ) {
-					// Copy the properties of the old image.
-					$new_image = $image_mapper->find( $new_image_id );
-					foreach ( get_object_vars( $image ) as $key => $value ) {
-						// phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
-						if ( in_array( $key, [ 'pid', 'galleryid', 'meta_data', 'filename', 'sortorder', 'extras_post_id' ] ) ) {
-							continue;
-						}
-						$new_image->$key = $value;
-					}
-					$image_mapper->save( $new_image );
-
-					// Copy tags.
-					$tags = wp_get_object_terms( $image->pid, 'ngg_tag', 'fields=ids' );
-					$tags = array_map( 'intval', $tags );
-					wp_set_object_terms( $new_image_id, $tags, 'ngg_tag', true );
-
-					// Copy all of the generated versions (resized versions, watermarks, etc).
-					foreach ( $this->get_image_sizes( $image ) as $named_size ) {
-						// phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
-						if ( in_array( $named_size, [ 'full', 'thumbnail' ] ) ) {
-							continue;
-						}
-						$old_abspath = $this->get_image_abspath( $image, $named_size );
-						$new_abspath = $this->get_image_abspath( $new_image, $named_size );
-						if ( is_array( @stat( $old_abspath ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-							$new_dir = dirname( $new_abspath );
-							// Ensure the target directory exists.
-							if ( @stat( $new_dir ) === false ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-								wp_mkdir_p( $new_dir );
+					if ( $new_image_id ) {
+						// Copy the properties of the old image.
+						$new_image = $image_mapper->find( $new_image_id );
+						foreach ( get_object_vars( $image ) as $key => $value ) {
+							// phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
+							if ( in_array( $key, [ 'pid', 'galleryid', 'meta_data', 'filename', 'sortorder', 'extras_post_id' ] ) ) {
+								continue;
 							}
-							@copy( $old_abspath, $new_abspath ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+							$new_image->$key = $value;
 						}
-					}
+						$image_mapper->save( $new_image );
 
-					// Mark as done.
-					$retval[] = $new_image_id;
+						// Copy tags.
+						$tags = wp_get_object_terms( $image->pid, 'ngg_tag', 'fields=ids' );
+						$tags = array_map( 'intval', $tags );
+						wp_set_object_terms( $new_image_id, $tags, 'ngg_tag', true );
+
+						// Copy all of the generated versions (resized versions, watermarks, etc).
+						foreach ( $this->get_image_sizes( $image ) as $named_size ) {
+							// phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
+							if ( in_array( $named_size, [ 'full', 'thumbnail' ] ) ) {
+								continue;
+							}
+							$old_abspath = $this->get_image_abspath( $image, $named_size );
+							$new_abspath = $this->get_image_abspath( $new_image, $named_size );
+							if ( is_array( @stat( $old_abspath ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+								$new_dir = dirname( $new_abspath );
+								// Ensure the target directory exists.
+								if ( @stat( $new_dir ) === false ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+									wp_mkdir_p( $new_dir );
+								}
+								@copy( $old_abspath, $new_abspath ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+							}
+						}
+
+						// Mark as done. Keyed by the source id so a caller can tell which
+						// specific images copied without relying on position.
+						$retval[ $image->pid ] = $new_image_id;
+					}
+				} catch ( \Exception $e ) {
+					// One image failing to copy must not discard images already copied earlier
+					// in this same bulk operation, nor abort move_images() before it deletes the
+					// sources of the ones that did copy.
+					error_log( 'NextGEN Gallery: could not copy image #' . $image->pid . ' to gallery: ' . $e->getMessage() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 				}
 			}
 		}
@@ -2441,8 +2898,14 @@ class Manager {
 		$retval = $this->copy_images( $images, $gallery );
 
 		if ( $images ) {
-			foreach ( $images as $image_id ) {
-				$this->delete_image( $image_id );
+			foreach ( $images as $image ) {
+				$pid = is_numeric( $image ) ? $image : $image->pid;
+
+				// A source that isn't a key here failed to copy - deleting it now would lose
+				// the photo with no copy anywhere. Only delete what actually made it across.
+				if ( isset( $retval[ $pid ] ) ) {
+					$this->delete_image( $image );
+				}
 			}
 		}
 
@@ -3511,7 +3974,11 @@ class Manager {
 			$new_image_abspath = path_join( $gallery_abspath, $filename );
 
 			// Are the src and dst the same? If so, we don't have to copy or move files.
-			if ( $image_abspath != $new_image_abspath ) {
+			// Recorded for the rollback below: a "keep files in place" import points the gallery
+			// directory at the customer's own folder, so src and dst already match here and this
+			// call never copies anything in - the full-size file on disk is the customer's own.
+			$copied_full_size = ( $image_abspath != $new_image_abspath );
+			if ( $copied_full_size ) {
 				// If we're not to override, ensure that the filename is unique.
 				if ( ! $override && @file_exists( $new_image_abspath ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 					$new_image_abspath = $this->get_unique_abspath( $new_image_abspath );
@@ -3633,21 +4100,128 @@ class Manager {
 			$image_mapper->use_cache = true;
 			$settings                = Settings::get_instance();
 
-			// Backup the image.
-			if ( $settings->get( 'imgBackup', false ) ) {
-				$this->backup_image( $image, true );
+			// Only backup is treated as fatal: it's a plain file copy, whose failure means
+			// disk-full or permissions. Rotation, resize and thumbnail all construct a
+			// LegacyThumbnail and share one memory-limit cliff (#711/#994), and resize runs
+			// first, so making any of them fatal would reject the whole image for a derivative
+			// that didn't render - which is the #711 shape: a valid, very large photo whose
+			// full size imported fine and only its thumbnail failed.
+			//
+			// This is about what stays on disk, not what the caller is told. The row and file
+			// are kept; reporting is the caller's business, and callers do surface it - e.g.
+			// ImageREST::upload_image() sets $retval['error'] for a missing thumbnail, which
+			// becomes an HTTP 500 there. What it does not do is undo the import, and neither
+			// does this.
+			$post_save_failure = null;
+
+			// Whether a _backup file was already sitting there before this call ran. A "keep
+			// files in place" folder import points the gallery directory at the customer's own
+			// folder, which can already hold photo.jpg_backup from an earlier resize - the
+			// import loop branches on exactly that name - and with imgBackup off nothing in this
+			// request would ever touch it. The rollback must not delete a file this call didn't
+			// create, so it needs to know the difference before backup_image() can blur it.
+			$backup_abspath     = $this->get_backup_abspath( $image );
+			$backup_preexisting = $backup_abspath && @file_exists( $backup_abspath ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			try {
+				// Backup the image.
+				if ( $settings->get( 'imgBackup', false ) && ! $this->backup_image( $image, true ) ) {
+					$post_save_failure = __( 'Could not back up the original image.', 'nggallery' );
+				}
+
+				// Most browsers do not honor EXIF's Orientation header: rotate the image to prevent display issues.
+				if ( null === $post_save_failure && ! $this->correct_exif_rotation( $image, true ) ) {
+					error_log( 'NextGEN Gallery: could not correct EXIF rotation for image #' . $image_id ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				}
+
+				// Create resized version of image.
+				if ( null === $post_save_failure && $settings->get( 'imgAutoResize', false ) && ! $this->generate_resized_image( $image, true ) ) {
+					error_log( 'NextGEN Gallery: could not resize image #' . $image_id ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				}
+
+				// Generate a thumbnail for the image.
+				if ( null === $post_save_failure && ! $this->generate_thumbnail( $image ) ) {
+					error_log( 'NextGEN Gallery: could not generate a thumbnail for image #' . $image_id ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				}
+			} catch ( \Exception $e ) {
+				// Resolved through Sanitization::exception_message() rather than getMessage():
+				// E_EntityNotFoundException is an empty class thrown bare, so its message is ''
+				// and the exception below would read "Could not finish importing x:" with no
+				// reason after the colon.
+				$post_save_failure = Sanitization::exception_message( $e, __( 'The image could not be imported.', 'nggallery' ) );
+				error_log( 'NextGEN Gallery: import post-processing failed for image #' . $image_id . ': ' . $post_save_failure ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			}
 
-			// Most browsers do not honor EXIF's Orientation header: rotate the image to prevent display issues.
-			$this->correct_exif_rotation( $image, true );
+			if ( null !== $post_save_failure ) {
+				// A pre-existing row - a Lightroom re-publish, or a "keep files in place" import
+				// that adopted a row via $override - holds data (other sizes, captions, a source
+				// file this call never copied) that this failure didn't create and has no business
+				// erasing. Only a row this call created itself is rolled back.
+				if ( $is_new ) {
+					$rollback_ok = true;
 
-			// Create resized version of image.
-			if ( $settings->get( 'imgAutoResize', false ) ) {
-				$this->generate_resized_image( $image, true );
+					// Deliberately not gated on backup_image() having returned true: a failed
+					// copy() can still leave a truncated destination behind (ENOSPC is exactly
+					// that), and that failure is itself the usual reason we are here. It *is*
+					// gated on the file not having pre-existed this call, which is the ownership
+					// question - the same one $copied_full_size answers for the full size.
+					if ( ! $backup_preexisting && $backup_abspath && @file_exists( $backup_abspath ) && $this->is_removable_image_path( $backup_abspath ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+						@unlink( $backup_abspath ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.PHP.NoSilencedErrors.Discouraged
+						$rollback_ok = ! @file_exists( $backup_abspath ) && $rollback_ok; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					}
+
+					// Keyed on the meta generate_image_size() persists for this row, rather than
+					// on a local flag: the flag could only be set on the no-failure branch, so it
+					// was always false by the time this ran and the thumbnail a throw left behind
+					// was never cleaned up. The meta is also the pid-safe discriminator - without
+					// it, resolving this size falls back to a filesystem probe keyed on (gallery,
+					// filename) and can return a *different*, live row's thumbnail.
+					if ( ! empty( $image->meta_data['thumbnail']['filename'] ) ) {
+						$thumbnail_abspath = $this->get_image_abspath( $image, 'thumbnail', true );
+						$rollback_ok       = $this->delete_image( $image, 'thumbnail' ) && $rollback_ok;
+						$rollback_ok       = ( ! $thumbnail_abspath || ! @file_exists( $thumbnail_abspath ) ) && $rollback_ok; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					}
+
+					// The full-size file is only this call's to remove when this call is the one
+					// that copied it in - see $copied_full_size above. A "keep files in place"
+					// folder import points the gallery directory at the customer's own folder and
+					// never copies, so unlinking the full size here would delete their own photo.
+					if ( $copied_full_size ) {
+						$full_abspath = $this->get_image_abspath( $image, 'full', true );
+						$rollback_ok  = $this->delete_image( $image, 'full' ) && $rollback_ok;
+						$rollback_ok  = ( ! $full_abspath || ! @file_exists( $full_abspath ) ) && $rollback_ok; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					}
+
+					if ( ! $rollback_ok ) {
+						// A file survived one of the unlinks above (delete_image() doesn't check
+						// unlink()'s own return, so its true/false can't be trusted alone) or the
+						// gallery directory falls outside the bounds it will act within at all - a
+						// supported configuration. Leaving the row in place keeps the orphan visible
+						// in Manage Gallery for a manual look, rather than destroying the only
+						// record that it exists while its files remain on disk.
+						error_log( 'NextGEN Gallery: could not fully clean up files for image #' . $image_id . ' after a failed import - leaving the record in place so the orphan stays visible.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					} elseif ( $image_mapper->destroy( $image ) ) {
+						// Fired only after the row is actually gone (delete_image() fires it
+						// per-size above) so third-party listeners still get the "this image is
+						// gone" signal the no-size call used to send. Firing it before destroy()
+						// meant a failed destroy told listeners the image was deleted while the
+						// row survived.
+						do_action( 'ngg_delete_image', $image_id, false );
+					} else {
+						error_log( 'NextGEN Gallery: removed the files for image #' . $image_id . ' after a failed import but could not remove its record - it may need manual cleanup.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					}
+				}
+				throw new \E_UploadException(
+					esc_html(
+						sprintf(
+							/* translators: 1: image filename, 2: reason the import could not be completed */
+							__( 'Could not finish importing %1$s: %2$s', 'nggallery' ),
+							$filename,
+							$post_save_failure
+						)
+					)
+				);
 			}
-
-			// Generate a thumbnail for the image.
-			$this->generate_thumbnail( $image );
 
 			// Set gallery preview image if missing.
 			GalleryMapper::get_instance()->set_preview_image( $dst_gallery, $image_id, true );
@@ -3779,7 +4353,7 @@ class Manager {
 			} elseif ( ! $this->is_safe_generated_image_path( $existing_image_abpath, $filename ) ) {
 				$refusal_reason = sprintf( 'the destination "%s" is not a safe image target', $existing_image_abpath );
 			} elseif ( Security::has_php_executable_extension( $existing_image_abpath ) ) {
-				$refusal_reason = sprintf( 'the stored file name "%s" carries a PHP script extension; rename it in the gallery folder to restore its thumbnails', wp_basename( $existing_image_abpath ) );
+				$refusal_reason = sprintf( self::REFUSAL_PHP_EXTENSION_NOTICE, wp_basename( $existing_image_abpath ) );
 			}
 
 			if ( null !== $refusal_reason ) {
@@ -3825,11 +4399,22 @@ class Manager {
 			}
 
 			$clone_path = $existing_image_abpath;
-			$thumbnail  = $this->generate_image_clone( $filename, $clone_path, $params );
+
+			// A full size already within its bounds is kept rather than re-encoded. It is decided here,
+			// after the destination gates, so the skip shares their refusals and the save/error
+			// contract below. Callers then get true instead of a thumbnail object.
+			if ( 'full' === $size && ! $this->is_resize_needed( $filename, $params ) ) {
+				$this->sync_unresized_image_metadata( $filename );
+				$thumbnail = true;
+			} else {
+				$thumbnail = $this->generate_image_clone( $filename, $clone_path, $params );
+			}
 
 			// We successfully generated the thumbnail.
-			if ( $thumbnail != null ) {
-				$clone_path = $thumbnail->fileName;
+			if ( $thumbnail ) {
+				if ( is_object( $thumbnail ) ) {
+					$clone_path = $thumbnail->fileName;
+				}
 
 				// The clone may carry a different extension than the path requested above (the
 				// "type" size parameter), so re-check the file actually written. This is a belt
@@ -3849,7 +4434,9 @@ class Manager {
 						),
 						self::REFUSAL_GENERATED_CLONE
 					);
-					$thumbnail->destruct();
+					if ( is_object( $thumbnail ) ) {
+						$thumbnail->destruct();
+					}
 					return false;
 				}
 
@@ -4286,6 +4873,36 @@ class Manager {
 				$subImport = $this->import_gallery_from_fs( $dir, $gallery_id, $create_new_gallerypath, $gallery_title, $filenames );
 				if ( $subImport ) {
 					$retval['image_ids'] = array_merge( $retval['image_ids'], $subImport['image_ids'] );
+
+					// Carried up with the ids, or a file skipped inside a subdirectory would be
+					// reported by the recursive call and then dropped by its parent.
+					if ( ! empty( $subImport['skipped_files'] ) ) {
+						$retval['skipped_files'] = array_merge(
+							isset( $retval['skipped_files'] ) ? $retval['skipped_files'] : [],
+							$subImport['skipped_files']
+						);
+					}
+					if ( ! empty( $subImport['skipped_reasons'] ) ) {
+						$retval['skipped_reasons'] = array_merge(
+							isset( $retval['skipped_reasons'] ) ? $retval['skipped_reasons'] : [],
+							$subImport['skipped_reasons']
+						);
+					}
+
+					// Each subdirectory makes its own gallery, so a caller that has to undo a
+					// failed import needs the whole set, not just the one this call returns.
+					if ( ! empty( $subImport['created_gallery_ids'] ) ) {
+						$retval['created_gallery_ids'] = array_merge(
+							isset( $retval['created_gallery_ids'] ) ? $retval['created_gallery_ids'] : [],
+							$subImport['created_gallery_ids']
+						);
+					}
+					if ( ! empty( $subImport['created_gallery_dir_ids'] ) ) {
+						$retval['created_gallery_dir_ids'] = array_merge(
+							isset( $retval['created_gallery_dir_ids'] ) ? $retval['created_gallery_dir_ids'] : [],
+							$subImport['created_gallery_dir_ids']
+						);
+					}
 				}
 			}
 		}
@@ -4304,9 +4921,18 @@ class Manager {
 				$gallery->path = str_ireplace( $gallery_root, '', $abspath );
 			}
 
-			// Save the gallery.
+			// save_entity() only makes the directory when it is absent, firing this action;
+			// an existing one (FTP'd, or left by a renamed gallery) is silently adopted, and
+			// the rollback may only sweep a directory this request actually created.
+			$dirs_made_before = did_action( 'ngg_created_new_gallery' );
+
 			if ( $gallery->save() ) {
-				$gallery_id = $gallery->id();
+				$gallery_id                      = $gallery->id();
+				$retval['created_gallery_ids'][] = $gallery_id;
+
+				if ( did_action( 'ngg_created_new_gallery' ) > $dirs_made_before ) {
+					$retval['created_gallery_dir_ids'][] = $gallery_id;
+				}
 			}
 		}
 
@@ -4335,9 +4961,28 @@ class Manager {
 		foreach ( $files_to_import as $file_abspath ) {
 			$basename = preg_replace( '#_backup$#', '', pathinfo( $file_abspath, PATHINFO_BASENAME ) );
 			if ( $this->is_image_file( $file_abspath ) ) {
-				$image_id = $this->import_image_file( $gallery_id, $file_abspath, $basename, false, false, false );
-				if ( $image_id ) {
-					$retval['image_ids'][] = $image_id;
+				try {
+					$image_id = $this->import_image_file( $gallery_id, $file_abspath, $basename, false, false, false );
+					if ( $image_id ) {
+						$retval['image_ids'][] = $image_id;
+					}
+				} catch ( \Exception $e ) {
+					// One file failing (disk-full, unreadable image, etc.) must not discard the
+					// files already imported earlier in this same folder/ZIP batch. Reported
+					// through the same skipped-entries channel the ZIP extension allow-list uses,
+					// so upload_zip()'s existing warning/skipped_files reporting picks it up.
+					$reason = Sanitization::exception_message( $e, __( 'The image could not be imported.', 'nggallery' ) );
+					error_log( 'NextGEN Gallery: skipped ' . $file_abspath . ' during folder import: ' . $reason ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					$this->collect_skipped_zip_entry( I18N::mb_basename( $file_abspath ) );
+
+					// Also returned directly, not only recorded on the singleton: a caller that
+					// doesn't know to ask get_skipped_zip_entries() (the legacy Import a Folder
+					// adapter does not) would otherwise report a failed file as a plain success,
+					// because the exception that used to reach it is now handled here.
+					$skipped_basename = I18N::mb_basename( $file_abspath );
+
+					$retval['skipped_files'][]                      = $skipped_basename;
+					$retval['skipped_reasons'][ $skipped_basename ] = $reason;
 				}
 			}
 		}
@@ -4693,14 +5338,15 @@ class Manager {
 
 			if ( ! is_array( $retval ) || empty( $retval['image_ids'] ) ) {
 				// Nothing was imported at all: this is an outright rejection, so it is reported the
-				// same way import_image_file() reports a single refused upload.
+				// same way import_image_file() reports a single refused upload. The list is no
+				// longer only extension refusals - a processing failure (disk-full, unreadable
+				// image) lands here too now - so the message no longer names a specific cause.
 				throw new \E_UploadException(
 					esc_html(
 						sprintf(
-							/* translators: 1: comma-separated list of rejected file names, 2: comma-separated list of accepted image formats. */
-							__( 'No images were imported. These files are not an accepted image format: %1$s. Acceptable formats: %2$s.', 'nggallery' ),
-							$skipped_label,
-							ngg_get_allowed_formats_label()
+							/* translators: %s: comma-separated list of file names that could not be imported. */
+							__( 'No images were imported. These files could not be imported: %s.', 'nggallery' ),
+							$skipped_label
 						)
 					)
 				);
@@ -4713,10 +5359,9 @@ class Manager {
 			// into markup, and the names come from the uploaded archive.
 			$retval['warning'] = esc_html(
 				sprintf(
-					/* translators: 1: comma-separated list of rejected file names, 2: comma-separated list of accepted image formats. */
-					__( 'These files were skipped because they are not an accepted image format: %1$s. Acceptable formats: %2$s.', 'nggallery' ),
-					$skipped_label,
-					ngg_get_allowed_formats_label()
+					/* translators: %s: comma-separated list of file names that could not be imported. */
+					__( 'These files were skipped and could not be imported: %s.', 'nggallery' ),
+					$skipped_label
 				)
 			);
 		}

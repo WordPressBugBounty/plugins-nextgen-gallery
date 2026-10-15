@@ -34,6 +34,18 @@ class GalleryPathValidation {
 			);
 		}
 
+		// SECURITY: refuse stream-wrapper syntax ("://") before path_join()/
+		// path_is_absolute() touch the value. A "phar://" path would make the
+		// filesystem call open the named archive, which unserialises its metadata
+		// object (object injection). A gallery path is always a plain path relative
+		// to the galleries root, so a wrapper is never valid here.
+		if ( false !== strpos( str_replace( '\\', '/', $trimmed ), '://' ) ) {
+			return new WP_Error(
+				'invalid_gallerypath',
+				__( 'Gallery path may not contain stream-wrapper syntax.', 'nggallery' )
+			);
+		}
+
 		$fs       = Filesystem::get_instance();
 		$root     = wp_normalize_path( $fs->get_document_root( 'galleries' ) );
 		$relative = $fs->add_trailing_slash( $trimmed );

@@ -416,11 +416,13 @@ class Controller {
 			// Once we have the image, get its dimensions.
 			if ( $image ) {
 				$dimensions = $storage->get_image_dimensions( $image, $named_size );
-				if ( $dimensions['width'] > $widest ) {
-					$widest = $dimensions['width'];
-				}
-				if ( $dimensions['height'] > $longest ) {
-					$longest = $dimensions['height'];
+				if ( $dimensions ) {
+					if ( $dimensions['width'] > $widest ) {
+						$widest = $dimensions['width'];
+					}
+					if ( $dimensions['height'] > $longest ) {
+						$longest = $dimensions['height'];
+					}
 				}
 			}
 		}
@@ -576,13 +578,24 @@ class Controller {
 		}
 
 		if ( $template_abspath ) {
-			// render the template.
-			extract( $vars );
+			// Include the template from an isolated scope so a caller-supplied variable
+			// bag cannot overwrite the path find() just validated, the buffering flag,
+			// or the string this method returns. Before this isolation a shortcode
+			// attribute literally named "template_abspath" (copied verbatim into the
+			// display-settings bag) replaced the resolved path through extract()'s
+			// default EXTR_OVERWRITE, turning the renderer into an arbitrary-file
+			// include. EXTR_SKIP protects the closure's own two parameters, so a
+			// "__ngg_target"/"__ngg_vars" attribute cannot reintroduce the overwrite.
+			$render = static function ( $__ngg_target, array $__ngg_vars ) {
+				extract( $__ngg_vars, EXTR_SKIP );
+				include $__ngg_target;
+			};
+
 			if ( $return_output ) {
 				ob_start();
 			}
 
-			include $template_abspath;
+			$render( $template_abspath, (array) $vars );
 
 			if ( $return_output ) {
 				$retval = ob_get_contents();

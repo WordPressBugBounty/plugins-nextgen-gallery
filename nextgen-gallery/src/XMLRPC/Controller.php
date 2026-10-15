@@ -6,6 +6,7 @@ use Imagely\NGG\DataMappers\Album as AlbumMapper;
 use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataStorage\Manager as StorageManager;
+use Imagely\NGG\REST\DataMappers\AlbumREST;
 use Imagely\NGG\Util\MassAssignment;
 use Imagely\NGG\Util\Security;
 
@@ -68,25 +69,13 @@ class Controller {
 
 		if ( $gallery ) {
 			/*
-			 * The "NextGEN Manage gallery" capability is required in every case (#932), and
-			 * ownership is never authorization on its own (#933): the stored author id
-			 * survives the capability being revoked, so without the outer gate an
-			 * ex-manager keeps write access to every gallery they ever created, and a
-			 * Subscriber who happens to own one gallery reaches the gallery/image write
-			 * methods through this endpoint.
-			 *
-			 * Past that gate, ownership decides whether the additional "NextGEN Manage
-			 * others gallery" capability is also needed. The author column is compared as
-			 * an integer because the mapper hands it back as a numeric string, and `===`
-			 * against an int id is false for every user.
+			 * The gallery-management capability is required in every case, and ownership is
+			 * never authorization on its own: the stored author id survives the capability
+			 * being revoked, so without the outer gate an ex-manager keeps write access to
+			 * every gallery they ever created, and a Subscriber who happens to own one
+			 * gallery reaches the gallery/image write methods through this endpoint.
 			 */
-			if ( ! Security::is_allowed( 'nextgen_edit_gallery' ) ) {
-				$retval = false;
-			} elseif ( Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) {
-				$retval = true;
-			} elseif ( (int) \get_current_user_id() === (int) $gallery->author ) {
-				$retval = true;
-			}
+			$retval = Security::can_manage_owned( $gallery->author, 'nextgen_edit_gallery' );
 
 			// Optionally, check if the user can upload to this gallery.
 			if ( $retval && $check_upload_capability ) {
@@ -639,6 +628,15 @@ class Controller {
 		if ( $this->_login( $username, $password, $blog_id ) ) {
 			// Are we allowed?
 			if ( Security::is_allowed( 'nextgen_edit_album' ) ) {
+				// Album edit/delete additionally require object-level ownership, mirroring the REST
+				// controller. get_album() is the shared authorization point for ngg.editAlbum and
+				// ngg.deleteAlbum (both call it with $return_model = true), so narrowing it here
+				// closes both write paths at once. ngg.getAlbum (read) passes $return_model = false
+				// and keeps the capability-only gate. #1096.
+				if ( $return_model && ! AlbumREST::current_user_can_manage_album( $album_id ) ) {
+					return new \IXR_Error( 403, 'Sorry, you are not allowed to manage this album' );
+				}
+
 				$mapper = AlbumMapper::get_instance();
 				$album  = $mapper->find( $album_id, true );
 				if ( $album ) {

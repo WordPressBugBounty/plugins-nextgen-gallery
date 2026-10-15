@@ -673,7 +673,7 @@ class nggManageGallery {
 							if ( ! $gallery ) {
 								continue;
 							}
-							// Per-row ownership: can_manage_this_gallery() returns true for the gallery author or for users holding 'NextGEN Manage others gallery'.
+							// Per-row ownership: can_manage_this_gallery() requires the gallery-management capability, then accepts the gallery author or a holder of 'NextGEN Manage others gallery'.
 							if ( ! nggAdmin::can_manage_this_gallery( $gallery->author ) ) {
 								continue;
 							}
@@ -782,8 +782,9 @@ class nggManageGallery {
 		// cannot be replayed against another user's gallery (see issue #963).
 		//
 		// Only when there is gallery context: $this->gid is 0 on the image-search screen,
-		// whose form (manage-images.php:151) posts no gid, and can_user_manage_gallery()
-		// returns false whenever $this->gallery is null. Gating unconditionally here would
+		// whose form (manage-images.php:151) posts no gid, so with $this->gallery null
+		// can_user_manage_gallery() answers on the cross-author capability alone and denies
+		// every owner-only caller. Gating unconditionally here would
 		// reinstate the guard f2cd6c9e removed to fix #816/#821 and make the gid == 0 branch
 		// in update_pictures() unreachable. Search-results mode is covered by that branch's
 		// capability gate plus its per-image ownership checks.
@@ -792,8 +793,9 @@ class nggManageGallery {
 			return;
 		}
 
-		// bulk update in a single gallery.
-		if ( isset( $_POST['bulkaction'] ) && isset( $_POST['doaction'] ) ) {
+		// bulk update in a single gallery. The action select and the row checkboxes live in the
+		// main form, so require the Apply button that confirms them rather than any submit.
+		if ( isset( $_POST['showThickbox'] ) && isset( $_POST['bulkaction'] ) && isset( $_POST['doaction'] ) ) {
 
 			check_admin_referer( 'ngg_updategallery' );
 
@@ -1380,15 +1382,9 @@ class nggManageGallery {
 	}
 
 	public function can_user_manage_gallery() {
-		$retval = false;
-
-		if ( $this->gallery && wp_get_current_user()->ID == $this->gallery->author ) {
-			$retval = true;
-		} elseif ( Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) {
-			$retval = true;
-		}
-
-		return $retval;
+		// No gallery in context means no author, so an id of 0 leaves the gate on the
+		// cross-author cap - as before, now with the base capability required alongside it.
+		return Security::can_manage_owned( $this->gallery ? $this->gallery->author : 0, 'nextgen_edit_gallery' );
 	}
 
 	public function update_pictures() {

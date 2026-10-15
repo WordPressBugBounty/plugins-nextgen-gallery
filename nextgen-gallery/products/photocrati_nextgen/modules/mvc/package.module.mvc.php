@@ -456,7 +456,10 @@ class C_MVC_View extends C_Component
             if ($__target == $__image_after_target) {
                 $this->end_element();
             }
-            extract($__params);
+            // EXTR_SKIP keeps the already-resolved $__target (and the other local
+            // render state) from being overwritten by a caller-supplied key of the
+            // same name, so the path validated above is the path that is included.
+            extract($__params, EXTR_SKIP);
             include $__target;
             if ($__target == $__image_before_target) {
                 $__image = isset($__params['image']) ? $__params['image'] : null;

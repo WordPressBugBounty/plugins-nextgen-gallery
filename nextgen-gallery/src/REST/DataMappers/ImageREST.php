@@ -1198,6 +1198,43 @@ class ImageREST {
 	}
 
 	/**
+	 * A name for an attachment that is usable in a message shown to an operator.
+	 *
+	 * Offloaded media has no local path, so get_attached_file() returns false for every id in
+	 * such a request - falling back to the raw id would name the whole failure list in database
+	 * numbers, and mb_basename( '' ) would name it in empty strings. The attachment URL still
+	 * resolves when the file is off-server, and the post title is the last thing that survives.
+	 *
+	 * @param int $id Attachment id.
+	 * @return string
+	 */
+	private static function attachment_display_name( $id ) {
+		$abspath = get_attached_file( $id );
+		if ( $abspath ) {
+			return \Imagely\NGG\Display\I18N::mb_basename( $abspath );
+		}
+
+		$url = wp_get_attachment_url( $id );
+		if ( $url ) {
+			return \Imagely\NGG\Display\I18N::mb_basename( strtok( $url, '?' ) );
+		}
+
+		// The title is only safe to echo back for a real attachment this user may read: ids
+		// arrive unvalidated, get_the_title() applies no capability check, and over REST
+		// is_admin() is false, so a draft or private post would otherwise have its title
+		// returned - prefixed "Private:" - to anyone who can manage galleries.
+		if ( 'attachment' === get_post_type( $id ) && current_user_can( 'read_post', $id ) ) {
+			$title = get_the_title( $id );
+
+			if ( '' !== trim( (string) $title ) ) {
+				return $title;
+			}
+		}
+
+		return '#' . (int) $id;
+	}
+
+	/**
 	 * Import images from the WordPress media library into a NextGEN gallery.
 	 *
 	 * @param WP_REST_Request $request The request object containing gallery_id, gallery_name, and attachment_ids parameters.
@@ -1257,6 +1294,8 @@ class ImageREST {
 		$storage              = \Imagely\NGG\DataStorage\Manager::get_instance();
 		$retval['image_ids']  = [];
 
+		$skipped = [];
+
 		foreach ( $attachment_ids as $id ) {
 			try {
 				// Import the attached file: for a downscaled upload that is the smaller
@@ -1264,25 +1303,21 @@ class ImageREST {
 				// memory limit. The untouched original is promoted into the backup below.
 				$abspath = get_attached_file( $id );
 
-				// file_get_contents() raises an uncatchable ValueError on an empty path.
-				if ( empty( $abspath ) || ! file_exists( $abspath ) ) {
-					return new WP_REST_Response(
-						[
-							'error' => __( 'Image generation failed', 'nggallery' ),
-						],
-						500
-					);
+				// get_attached_file() returns false for an offloaded attachment or a bad id,
+				// and file_get_contents() raises an uncatchable ValueError on an empty path, so
+				// this has to be refused before the read. Collected and skipped rather than
+				// returned: one unresolvable attachment must not discard the ones already
+				// imported in this request, nor the post-loop cleanup.
+				if ( empty( $abspath ) || ! is_readable( $abspath ) ) {
+					$skipped[] = self::attachment_display_name( $id );
+					continue;
 				}
 
 				$file_data = file_get_contents( $abspath );
 
 				if ( empty( $file_data ) ) {
-					return new WP_REST_Response(
-						[
-							'error' => __( 'Image generation failed', 'nggallery' ),
-						],
-						500
-					);
+					$skipped[] = \Imagely\NGG\Display\I18N::mb_basename( $abspath );
+					continue;
 				}
 				// Name the gallery file after the original so the '-scaled' suffix does not leak.
 				$file_name  = \Imagely\NGG\Display\I18N::mb_basename( Filesystem::get_attachment_original_abspath( $id ) );
@@ -1305,43 +1340,74 @@ class ImageREST {
 					$image_mapper->save( $image );
 					$retval['image_ids'][] = $image->{$image->id_field};
 				} else {
-					return new WP_REST_Response(
-						[
-							'error' => __( 'Image generation failed', 'nggallery' ),
-						],
-						500
-					);
+					$skipped[] = $file_name;
 				}
-			} catch ( \RuntimeException $ex ) {
-				if ( $created_gallery ) {
-					$gallery_mapper->destroy( $gallery_id );
-				}
-				return new WP_REST_Response(
-					[
-						// The 500 is explicit here, so the risk is only a blank message in the
-						// body rather than a suppressed failure - but a bare
-						// E_EntityNotFoundException would still show the user nothing.
-						'error' => \Imagely\NGG\Util\Sanitization::exception_message(
-							$ex,
-							__( 'The image could not be imported.', 'nggallery' )
-						),
-					],
-					500
-				);
 			} catch ( \Exception $ex ) {
-				return new WP_REST_Response(
-					[
-						'error'         => __( 'An unexpected error occurred.', 'nggallery' ),
-						'error_details' => $ex->getMessage(),
-					],
-					500
+				// One attachment failing (disk-full, unreadable image, etc.) must not discard
+				// attachments already imported earlier in this same request, nor destroy a
+				// gallery this same request just created for them.
+				//
+				// Resolved through Sanitization::exception_message() rather than getMessage():
+				// E_EntityNotFoundException is an empty class thrown bare, so its message is ''
+				// and both the log line and the reported reason would otherwise say nothing.
+				$reason = \Imagely\NGG\Util\Sanitization::exception_message(
+					$ex,
+					__( 'The image could not be imported.', 'nggallery' )
+				);
+
+				error_log( 'NextGEN Gallery: could not import media library attachment #' . $id . ': ' . $reason ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+
+				// The reason travels with the filename, not just to the log, so the response can
+				// say why a file was dropped.
+				$skipped[] = sprintf(
+					/* translators: 1: image filename, 2: reason the image could not be imported */
+					__( '%1$s (%2$s)', 'nggallery' ),
+					self::attachment_display_name( $id ),
+					$reason
 				);
 			}
 		}
 
+		if ( empty( $retval['image_ids'] ) ) {
+			// Not when a row survived: import_image_file() keeps one whose files it could not
+			// remove, and destroying its gallery makes it unreachable from every admin screen
+			// while the files stay served.
+			if ( $created_gallery && ! $image_mapper->find_all_for_gallery( $gallery_id ) ) {
+				$gallery_mapper->destroy( $gallery_id );
+			}
+
+			// Names the files rather than answering a bare "Image generation failed": on an
+			// offloaded-media site get_attached_file() returns false for every id, so every one
+			// is refused before the read and this is the only response the admin sees.
+			$error = ! empty( $skipped )
+				? sprintf(
+					/* translators: %s: comma-separated list of files that could not be imported, each with its reason. */
+					__( 'No images were imported. These files could not be imported: %s.', 'nggallery' ),
+					implode( ', ', $skipped )
+				)
+				: __( 'Image generation failed', 'nggallery' );
+
+			return new WP_REST_Response(
+				[
+					'error'         => $error,
+					'skipped_files' => array_map( 'esc_html', $skipped ),
+				],
+				500
+			);
+		}
+
 		// If images were imported successfully, set the first one as preview if gallery has no preview
-		if ( ! empty( $retval['image_ids'] ) ) {
-			self::set_gallery_preview_if_empty( $gallery_id, $retval['image_ids'][0] );
+		self::set_gallery_preview_if_empty( $gallery_id, $retval['image_ids'][0] );
+
+		if ( ! empty( $skipped ) ) {
+			$retval['skipped_files'] = array_map( 'esc_html', $skipped );
+			$retval['warning']       = esc_html(
+				sprintf(
+					/* translators: %s: comma-separated list of file names that could not be imported. */
+					__( 'These files were skipped and could not be imported: %s.', 'nggallery' ),
+					implode( ', ', $skipped )
+				)
+			);
 		}
 
 		$retval['gallery_name'] = esc_html( $gallery_name );
@@ -1579,6 +1645,17 @@ class ImageREST {
 		$keep_location = $request->get_param( 'keep_location' ) === true || $request->get_param( 'keep_location' ) === 'on';
 		$gallery_title = $request->get_param( 'gallery_title', null );
 
+		// SECURITY: refuse stream-wrapper syntax ("://") on the raw folder parameter
+		// before path_join()/path_is_absolute() touch it. A value such as
+		// "phar:///path/to/image.png/x.php" makes the filesystem call open the named
+		// Phar archive; on PHP <= 7.4 opening a Phar unserialises its metadata object
+		// (object injection), while PHP 8.0+ defers that to an explicit getMetadata()
+		// call. An import folder is always a plain path under the import root, never a
+		// wrapper, so the value is refused regardless of PHP version.
+		if ( false !== strpos( str_replace( '\\', '/', (string) $folder ), '://' ) ) {
+			return new WP_REST_Response( [ 'error' => __( 'Invalid import folder.', 'nggallery' ) ], 400 );
+		}
+
 		if ( empty( $gallery_title ) ) {
 			$gallery_title = null;
 		}
@@ -1655,6 +1732,7 @@ class ImageREST {
 		}
 
 		$storage = \Imagely\NGG\DataStorage\Manager::get_instance();
+		$storage->reset_skipped_zip_entries();
 
 		try {
 			$retval = $storage->import_gallery_from_fs(
@@ -1677,9 +1755,83 @@ class ImageREST {
 				);
 			}
 
+			// Every file failing is a failed import, not a success with an empty gallery. The
+			// per-file catch in import_gallery_from_fs() means the exception that used to reach
+			// the handler below no longer does, so this array arrives truthy with no ids and the
+			// 200 at the end would report success. Mirrors the guard import_media_library() has.
+			if ( empty( $retval['image_ids'] ) ) {
+				$skipped = $storage->get_skipped_zip_entries();
+
+				// Only tear the galleries down when the per-image rollback left nothing behind.
+				// It deliberately keeps a row whose files it could not delete so the orphan stays
+				// visible in Manage Gallery, and that screen authorizes an image through its
+				// gallery - destroying the gallery would make such a row unreachable from every
+				// admin screen while its files stay web-served.
+				$image_mapper   = ImageMapper::get_instance();
+				$surviving_rows = [];
+
+				$created_gallery_ids = ! empty( $retval['created_gallery_ids'] )
+					? array_unique( array_map( 'intval', $retval['created_gallery_ids'] ) )
+					: array_filter( [ (int) ( $retval['gallery_id'] ?? 0 ) ] );
+
+				foreach ( $created_gallery_ids as $created_gallery_id ) {
+					if ( $image_mapper->find_all_for_gallery( $created_gallery_id ) ) {
+						$surviving_rows[] = $created_gallery_id;
+					}
+				}
+
+				if ( empty( $surviving_rows ) ) {
+					$gallery_mapper = \Imagely\NGG\DataMappers\Gallery::get_instance();
+
+					// Sweep only a directory this request actually created. An adopted one - the
+					// customer's own folder on a keep-in-place import, an FTP'd folder, or one
+					// left by a renamed gallery - holds files this import never put there.
+					$created_dir_ids = ! empty( $retval['created_gallery_dir_ids'] )
+						? array_map( 'intval', $retval['created_gallery_dir_ids'] )
+						: [];
+
+					foreach ( $created_gallery_ids as $created_gallery_id ) {
+						$gallery_mapper->destroy( $created_gallery_id, in_array( $created_gallery_id, $created_dir_ids, true ) );
+					}
+				}
+
+				return new WP_REST_Response(
+					[
+						'error'         => ! empty( $skipped )
+							? sprintf(
+								/* translators: %s: comma-separated list of file names that could not be imported. */
+								__( 'No images were imported. These files could not be imported: %s.', 'nggallery' ),
+								implode( ', ', $skipped )
+							)
+							: sprintf(
+								// translators: %s is the folder path.
+								__( 'No images were imported from the folder "%s".', 'nggallery' ),
+								$folder
+							),
+						'skipped_files' => array_map( 'esc_html', $skipped ),
+					],
+					500
+				);
+			}
+
 			// If folder imported successfully with images, set the first one as preview if gallery has no preview
-			if ( ! empty( $retval['gallery_id'] ) && ! empty( $retval['image_ids'] ) ) {
+			if ( ! empty( $retval['gallery_id'] ) ) {
 				self::set_gallery_preview_if_empty( $retval['gallery_id'], $retval['image_ids'][0] );
+			}
+
+			// import_gallery_from_fs() tolerates one file failing without aborting the rest, but
+			// unlike upload_zip() this endpoint never read back which files that was - the only
+			// trace was a WP_DEBUG log line. Surface it the same way upload_zip() does.
+			$skipped = $storage->get_skipped_zip_entries();
+			if ( ! empty( $skipped ) && is_array( $retval ) ) {
+				$retval['skipped_files'] = array_map( 'esc_html', $skipped );
+				$retval['warning']       = esc_html(
+					sprintf(
+						/* translators: %s: comma-separated list of file names that could not be imported. */
+						__( 'These files were skipped and could not be imported: %s.', 'nggallery' ),
+						implode( ', ', $skipped )
+					)
+				);
 			}
 		} catch ( \Exception $ex ) {
 			return new WP_REST_Response(

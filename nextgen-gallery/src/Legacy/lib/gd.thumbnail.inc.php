@@ -954,7 +954,7 @@ class ngg_Thumbnail {
 				$dest_y = 0 + $yPOS;
 				break;
 			case 'mid':
-				$dest_y = ( $sourcefile_height / 2 ) - ( $watermarkfile_height / 2 );
+				$dest_y = (int) ( ( $sourcefile_height - $watermarkfile_height ) / 2 ) + $yPOS;
 				break;
 			case 'bot':
 				$dest_y = $sourcefile_height - $watermarkfile_height - $yPOS;
@@ -968,7 +968,7 @@ class ngg_Thumbnail {
 				$dest_x = 0 + $xPOS;
 				break;
 			case 'Center':
-				$dest_x = ( $sourcefile_width / 2 ) - ( $watermarkfile_width / 2 );
+				$dest_x = (int) ( ( $sourcefile_width - $watermarkfile_width ) / 2 ) + $xPOS;
 				break;
 			case 'Right':
 				$dest_x = $sourcefile_width - $watermarkfile_width - $xPOS;
@@ -977,6 +977,14 @@ class ngg_Thumbnail {
 				$dest_x = 0;
 				break;
 		}
+
+		// Offsets nudge the watermark away from its anchor, including on the centred axes.
+		// Bound each coordinate to its own anchor range so an offset cannot push the watermark
+		// off the canvas, while a watermark larger than the canvas keeps overflowing from centre.
+		$x_edge = $sourcefile_width - $watermarkfile_width;
+		$y_edge = $sourcefile_height - $watermarkfile_height;
+		$dest_x = min( max( (int) $dest_x, min( 0, $x_edge ) ), max( 0, $x_edge ) );
+		$dest_y = min( max( (int) $dest_y, min( 0, $y_edge ) ), max( 0, $y_edge ) );
 
 		// phpcs:ignore Squiz.PHP.CommentedOutCode.Found -- Debug code intentionally commented out.
 		// debug

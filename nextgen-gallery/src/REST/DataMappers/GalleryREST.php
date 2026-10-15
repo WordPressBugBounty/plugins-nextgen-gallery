@@ -318,9 +318,7 @@ class GalleryREST {
 		if ( $request && $request->get_param( 'id' ) ) {
 			$gallery = GalleryMapper::get_instance()->find( $request->get_param( 'id' ) );
 			if ( $gallery ) {
-				if ( get_current_user_id() !== $gallery->author && ! Security::is_allowed( 'NextGEN Manage others gallery' ) ) {
-					return false;
-				}
+				return Security::can_manage_owned( $gallery->author, 'nextgen_edit_gallery' );
 			}
 		}
 
@@ -670,12 +668,10 @@ class GalleryREST {
 			);
 		}
 
-		// Check if user can view this gallery.
-		// Users can only view galleries they own unless they have "nextgen_edit_gallery_unowned" capability.
-		$current_user_id = get_current_user_id();
-		$can_manage      = ( (int) $current_user_id === (int) $gallery->author ) || Security::is_allowed( 'nextgen_edit_gallery_unowned' );
-
-		if ( ! $can_manage ) {
+		// Read surface, so the required capability is the overview one the route already gates on.
+		// That leaves this gate's effective rule unchanged; requiring the edit capability here
+		// would stop an overview-only role from reading its own galleries.
+		if ( ! Security::can_manage_owned( $gallery->author, 'NextGEN Gallery overview' ) ) {
 			return new WP_Error(
 				'gallery_forbidden',
 				__( 'Sorry, you do not have permission to view this gallery', 'nggallery' ),
@@ -712,9 +708,7 @@ class GalleryREST {
 			);
 		}
 
-		$mapper          = GalleryMapper::get_instance();
-		$current_user_id = get_current_user_id();
-		$can_edit_all    = Security::is_allowed( 'nextgen_edit_gallery_unowned' );
+		$mapper = GalleryMapper::get_instance();
 
 		// Batch the per-gallery image counts into a single grouped query. Previously each gallery
 		// triggered its own COUNT(*) in prepare_gallery_for_response — an N+1 that made albums with
@@ -730,10 +724,10 @@ class GalleryREST {
 				continue;
 			}
 
-			// Check permissions for each gallery
-			$can_manage = ( (int) $current_user_id === (int) $gallery->author ) || $can_edit_all;
-
-			if ( ! $can_manage ) {
+			// Same read gate as get_gallery(), so its effective rule is likewise unchanged. The
+			// capability lookups read the already-loaded WP_User, so there is no per-row query
+			// to hoist out of the loop.
+			if ( ! Security::can_manage_owned( $gallery->author, 'NextGEN Gallery overview' ) ) {
 				// Skip galleries user doesn't have permission to view
 				continue;
 			}
@@ -1232,10 +1226,9 @@ class GalleryREST {
 			$thumbnail = $storage->get_image_url( $gallery->previewpic, 'thumb' );
 		}
 
-		// Check if current user can manage this gallery
-		// User can manage if they own it OR have "NextGEN Manage others gallery" capability
-		$current_user_id = get_current_user_id();
-		$can_manage      = ( (int) $current_user_id === (int) $gallery->author ) || Security::is_allowed( 'nextgen_edit_gallery_unowned' );
+		// Mirrors check_edit_permission() so the flag cannot promise the adminApp an edit the
+		// write routes will refuse once the owner's gallery-management capability is revoked.
+		$can_manage = Security::can_manage_owned( $gallery->author, 'nextgen_edit_gallery' );
 
 		return [
 			'id'           => $gallery->gid,

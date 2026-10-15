@@ -97,15 +97,6 @@ class A_Import_Media_Library_Form extends Mixin
  */
 class A_NextGen_AddGallery_Ajax extends Mixin
 {
-    public function cookie_dump_action()
-    {
-        foreach ($_COOKIE as $key => &$value) {
-            if (is_string($value)) {
-                $value = stripslashes($value);
-            }
-        }
-        return ['success' => 1, 'cookies' => $_COOKIE];
-    }
     public function create_new_gallery_action()
     {
         $gallery_name = urldecode($this->param('gallery_name'));
@@ -301,6 +292,31 @@ class A_NextGen_AddGallery_Ajax extends Mixin
                         $retval = $storage->import_gallery_from_fs($import_path, false, !$keep_files, $gallery_title);
                         if (!$retval) {
                             $retval = ['error' => 'Could not import folder. No images found.'];
+                        } elseif (!empty($retval['skipped_files'])) {
+                            // A per-file failure is handled inside import_gallery_from_fs() so one
+                            // bad file no longer aborts the batch - which also means the exception
+                            // that used to land in the catch arms below never reaches them. Without
+                            // this the screen reports a plain "Successfully imported N images" for
+                            // an import that partly failed.
+                            // Escaped here, at the producer: the completion toast hands this string
+                            // to $.gritter.add({text:...}), which splices it into raw markup, so a
+                            // file name is page markup unless it is escaped first. Escaping the
+                            // list covers both the warning and the error built from it below.
+                            $retval['skipped_files'] = array_map('esc_html', $retval['skipped_files']);
+                            $skipped_label = implode(', ', $retval['skipped_files']);
+                            if (empty($retval['image_ids'])) {
+                                $retval['error'] = esc_html(sprintf(
+                                    /* translators: %s: comma-separated list of file names that could not be imported. */
+                                    __('No images were imported. These files could not be imported: %s.', 'nggallery'),
+                                    $skipped_label
+                                ));
+                            } else {
+                                $retval['warning'] = esc_html(sprintf(
+                                    /* translators: %s: comma-separated list of file names that could not be imported. */
+                                    __('These files were skipped and could not be imported: %s.', 'nggallery'),
+                                    $skipped_label
+                                ));
+                            }
                         }
                     } else {
                         $retval['error'] = __('No permissions to import folders. Try refreshing the page or ensuring that your user account has sufficient roles/privileges.', 'nggallery');

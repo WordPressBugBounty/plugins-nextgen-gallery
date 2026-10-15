@@ -17,6 +17,20 @@ class RoutingApp {
 	public static $_instances = [];
 
 	/**
+	 * Most path segments a routed gallery url can carry after the parameter slug.
+	 *
+	 * @var int
+	 */
+	const MAX_PARAMETER_SEGMENTS = 6;
+
+	/**
+	 * Segments whose following segment is user supplied text, not a slug.
+	 *
+	 * @var string[]
+	 */
+	const FREE_TEXT_SEGMENTS = [ 'search', 'tagfilter' ];
+
+	/**
 	 * Request URI.
 	 *
 	 * @var string|false
@@ -340,11 +354,49 @@ class RoutingApp {
 			}
 		}
 
+		// Rewrites are matched against a decoded URI, but the result is cached and later
+		// reassembled into links. Restore the encoding of the free-text search value so
+		// reserved characters in it do not truncate those links when the URI is parsed.
+		$request_uri = $this->encode_search_parameter_segment( $request_uri );
+
 		// Cache all known data about the application request.
 		$this->set_app_request_uri( $request_uri );
 		$this->get_router()->set_routed_app( $this );
 
 		return $redirect;
+	}
+
+	/**
+	 * Percent-encodes the reserved characters of the free-text search parameter's value
+	 *
+	 * Only characters that end a path when the URI is parsed are encoded, so running this
+	 * over an already encoded value leaves it unchanged. The parameter has to open its own
+	 * path segment to match, so a path that merely contains the key is left alone.
+	 *
+	 * @param string $request_uri
+	 * @return string
+	 */
+	public function encode_search_parameter_segment( $request_uri ) {
+		if ( ! is_string( $request_uri ) || strpos( $request_uri, 'nggsearch' ) === false ) {
+			return $request_uri;
+		}
+
+		$separator = preg_quote( $this->_settings->router_param_separator, '#' );
+
+		$encoded = preg_replace_callback(
+			"#(?<=/)(nggsearch{$separator})([^/]+)#",
+			function ( $matches ) {
+				return $matches[1] . str_replace(
+					[ '#', '?', '&', ' ' ],
+					[ '%23', '%3F', '%26', '%20' ],
+					$matches[2]
+				);
+			},
+			$request_uri
+		);
+
+		// A failed substitution returns null, which would blank the whole request URI.
+		return is_string( $encoded ) ? $encoded : $request_uri;
 	}
 
 	/**
@@ -723,6 +775,60 @@ class RoutingApp {
 		return $retval;
 	}
 
+	/**
+	 * Determines whether what follows the parameter slug can never be gallery parameters.
+	 *
+	 * Album display types route arbitrary album, gallery and image slugs, so the
+	 * remainder is judged on what it cannot be rather than against a whitelist.
+	 *
+	 * @param string $request_uri
+	 * @return bool
+	 */
+	protected function has_unroutable_remainder( $request_uri ) {
+		$settings = $this->_settings;
+		$parts    = explode( '/' . $settings->router_param_slug . '/', $request_uri, 2 );
+
+		if ( ! isset( $parts[1] ) ) {
+			return false;
+		}
+
+		$segments = array_values( array_filter( explode( '/', $parts[1] ), 'strlen' ) );
+
+		if ( ! $segments ) {
+			return false;
+		}
+
+		// Deepest routed form is album, gallery and image plus one parameter pair.
+		if ( count( $segments ) > self::MAX_PARAMETER_SEGMENTS ) {
+			return true;
+		}
+
+		$separator = $settings->router_param_separator;
+		$previous  = '';
+
+		foreach ( $segments as $segment ) {
+			// A path back into WordPress is never an album, gallery or image.
+			if ( preg_match( '#^wp-(content|includes|admin)$#i', $segment ) ) {
+				return true;
+			}
+
+			// Search terms and tag filters are user text that legitimately carries
+			// dots, both as /search/{term} and once rewritten to nggsearch--{term}.
+			$free_text = in_array( strtolower( $previous ), self::FREE_TEXT_SEGMENTS, true )
+				|| ( $separator && strpos( $segment, $separator ) !== false );
+
+			// Relative asset urls resolved against a gallery url are what seed the
+			// crawl; no slug ends in a file extension.
+			if ( ! $free_text && preg_match( '#\\.[a-z0-9]{2,5}$#i', $segment ) ) {
+				return true;
+			}
+
+			$previous = $segment;
+		}
+
+		return false;
+	}
+
 	public function has_parameter_segments() {
 		$retval      = false;
 		$settings    = $this->_settings;
@@ -736,8 +842,17 @@ class RoutingApp {
 			return (bool) preg_match( "#{$param_regex}{1,}$#", $request_uri );
 		}
 
+		$slug_found = strpos( $request_uri, '/' . $settings->router_param_slug . '/' ) !== false;
+
+		// The slug alone does not make the request ours. Claiming one that trails
+		// something no gallery url can contain lets passthru() drop the remainder,
+		// so WordPress resolves the base page and answers 200 instead of 404.
+		if ( $slug_found && $this->has_unroutable_remainder( $request_uri ) ) {
+			return false;
+		}
+
 		// If we detect the MVC_PARAM_SLUG, then we assume that we have parameters.
-		if ( strpos( $request_uri, '/' . $settings->router_param_slug . '/' ) !== false ) {
+		if ( $slug_found ) {
 			$retval = true;
 		}
 

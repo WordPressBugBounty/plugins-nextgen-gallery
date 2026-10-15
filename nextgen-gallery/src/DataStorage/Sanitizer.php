@@ -12,11 +12,17 @@ class Sanitizer {
 	/**
 	 * Strips HTML from data with various options.
 	 *
-	 * @param string $data         The data to sanitize.
-	 * @param bool   $just_scripts Whether to only remove script/style tags. Default false.
+	 * @param string   $data                  The data to sanitize.
+	 * @param bool     $just_scripts          Whether to only remove script/style tags. Default false.
+	 * @param string[] $allowed_frame_targets Link target values to preserve, e.g. [ '_blank' ]. Empty
+	 *                                        by default, which is HTMLPurifier's own default and
+	 *                                        strips every target. Only consulted on the purifier
+	 *                                        path: both tag-stripping fallbacks remove the whole
+	 *                                        anchor regardless. Permitting a target also makes
+	 *                                        HTMLPurifier add rel="noreferrer noopener" to it.
 	 * @return string The sanitized data.
 	 */
-	public static function strip_html( $data, $just_scripts = false ) {
+	public static function strip_html( $data, $just_scripts = false, $allowed_frame_targets = [] ) {
 		// NGG 3.3.11 fix. Some of the data persisted with 3.3.11 didn't strip out all HTML.
 		if ( strpos( $data, 'ngg_data_strip_html_placeholder' ) !== false ) {
 			if ( class_exists( 'DomDocument' ) ) {
@@ -31,7 +37,7 @@ class Sanitizer {
 					// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 					$el->childNodes ? iterator_to_array( $el->childNodes ) : []
 				);
-				return self::strip_html( implode( ' ', $parts ), $just_scripts );
+				return self::strip_html( implode( ' ', $parts ), $just_scripts, $allowed_frame_targets );
 			} else {
 				return \wp_strip_all_tags( $data );
 			}
@@ -134,6 +140,16 @@ class Sanitizer {
 
 			$config = new \HTMLPurifier_Config( $schema );
 			$config->set( 'Cache.DefinitionImpl', null );
+
+			// Opt-in per caller. HTMLPurifier's default allows no link target at all, which is
+			// right for most columns, but the album name and description are allowed to carry
+			// a[target] (see Album::validation()). Setting this also makes HTMLPurifier attach
+			// rel="noreferrer noopener" to any target it keeps, so permitting one does not
+			// reintroduce reverse tabnabbing.
+			if ( ! empty( $allowed_frame_targets ) ) {
+				$config->set( 'Attr.AllowedFrameTargets', array_values( (array) $allowed_frame_targets ) );
+			}
+
 			$purifier       = new \HTMLPurifier( $config );
 			$default_return = $purifier->purify( $data );
 			return \apply_filters( 'ngg_html_sanitization', $default_return, $data );

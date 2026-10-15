@@ -154,6 +154,13 @@ function nggallery_picturelist( $controller ) {
 				<?php wp_nonce_field( 'ngg_updategallery' ); ?>
 				<input type="hidden" name="nggpage" value="manage-images"/>
 
+				<?php // Enter in a text field activates the form's first submit button, so keep the primary save action first. ?>
+				<input type="submit"
+						name="updatepictures"
+						value="<?php esc_attr_e( 'Save Changes', 'nggallery' ); ?>"
+						hidden
+						style="display: none;"/>
+
 				<!-- form#updategallery continues below end of if statement -->
 
 				<!-- div.ngg_page_content_main continues below end of if statement -->
@@ -177,6 +184,13 @@ function nggallery_picturelist( $controller ) {
 
 						<?php wp_nonce_field( 'ngg_updategallery' ); ?>
 						<input type="hidden" name="nggpage" value="manage-images"/>
+
+						<?php // Enter in a text field activates the form's first submit button, so keep the primary save action first. ?>
+						<input type="submit"
+								name="updatepictures"
+								value="<?php esc_attr_e( 'Save Changes', 'nggallery' ); ?>"
+								hidden
+								style="display: none;"/>
 
 						<?php if ( nggGallery::current_user_can( 'NextGEN Edit gallery options' ) ) : ?>
 

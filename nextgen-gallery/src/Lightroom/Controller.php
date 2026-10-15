@@ -7,6 +7,7 @@ use Imagely\NGG\DataMappers\Album as AlbumMapper;
 use Imagely\NGG\DataMappers\Gallery as GalleryMapper;
 use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataStorage\Manager as StorageManager;
+use Imagely\NGG\REST\DataMappers\AlbumREST;
 
 use Imagely\NGG\Util\{Filesystem, MassAssignment, Security};
 
@@ -229,8 +230,7 @@ class Controller {
 							if ( $gallery != null ) {
 								$is_owner = ( (int) \get_current_user_id() === (int) $gallery->author );
 
-								$task_auth = ( $task_auth
-									&& ( $is_owner || Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) );
+								$task_auth = Security::can_manage_owned( $gallery->author, 'nextgen_edit_gallery' );
 
 								// Which capability to name in the refusal (#933): an owner who is
 								// refused is missing the base capability, anyone else is missing the
@@ -242,11 +242,33 @@ class Controller {
 							}
 
 							break;
-						case 'album_remove':
-						case 'album_edit':
 						case 'album_add':
 							$task_auth       = Security::is_allowed( 'nextgen_edit_album' );
 							$task_denied_cap = 'NextGEN Edit album';
+							break;
+						case 'album_remove':
+						case 'album_edit':
+							$task_auth       = Security::is_allowed( 'nextgen_edit_album' );
+							$task_denied_cap = 'NextGEN Edit album';
+
+							// Editing or deleting an existing album additionally requires
+							// object-level ownership, mirroring the REST controller and the
+							// gallery cases above (#1096). Without it any delegated
+							// "NextGEN Edit album" holder could rename, re-point or permanently
+							// delete every album on the site through Lightroom. album_add is a
+							// create with no id, so it is gated on the base capability alone.
+							if ( $task_auth ) {
+								$album_id = $api->get_query_id(
+									isset( $task_query['id'] ) ? $task_query['id'] : null,
+									$task_list
+								);
+
+								if ( $album_id && ! AlbumREST::current_user_can_manage_album( $album_id ) ) {
+									$task_auth       = false;
+									$task_denied_cap = 'NextGEN Manage others gallery';
+								}
+							}
+
 							break;
 						case 'image_list_move':
 							// A no-op in handle_job(), so nothing is lost by leaving it unauthorized.
@@ -1736,21 +1758,13 @@ class API {
 	 * @return bool
 	 */
 	protected function task_is_authorized( $capability, $entity = null, $owner_field = null, $unowned_capability = null ) {
-		if ( ! Security::is_allowed( $capability ) ) {
-			return false;
+		// No entity, or an entity type with no owner column, leaves nothing to narrow on.
+		if ( null === $entity || null === $owner_field || null === $unowned_capability
+			|| ! isset( $entity->{$owner_field} ) ) {
+			return Security::is_allowed( $capability );
 		}
 
-		// Ownership only narrows; it never substitutes for the capability above.
-		if ( null === $entity || null === $owner_field || null === $unowned_capability ) {
-			return true;
-		}
-
-		if ( ! isset( $entity->{$owner_field} ) ) {
-			return true;
-		}
-
-		return \get_current_user_id() === (int) $entity->{$owner_field}
-			|| Security::is_allowed( $unowned_capability );
+		return Security::can_manage_owned( $entity->{$owner_field}, $capability, $unowned_capability );
 	}
 
 	/**
@@ -3177,10 +3191,14 @@ class API {
 						$error   = null;
 						$warning = null;
 
-						// Albums carry no owner column, so there is no ownership dimension to
-						// narrow on - but the capability still has to hold at execution time,
-						// for the same reason it does for galleries.
-						if ( ! $this->task_is_authorized( 'nextgen_edit_album' ) ) {
+						// The base capability must still hold at execution time, for the same
+						// reason it does for galleries (a capability revoked between enqueue and
+						// execute). Albums have no owner column, so ownership is derived from the
+						// album's extras post (post_author) via AlbumREST - re-checked here as
+						// well as at the enqueue gate, matching the gallery twin's execute-time
+						// ownership re-check. #1096.
+						if ( ! $this->task_is_authorized( 'nextgen_edit_album' )
+							|| ! AlbumREST::current_user_can_manage_album( $task_query['id'] ) ) {
 							/* translators: %1$s: album ID */
 							$error = __( 'Not authorized to edit album (%1$s).', 'nggallery' );
 							$album = null;

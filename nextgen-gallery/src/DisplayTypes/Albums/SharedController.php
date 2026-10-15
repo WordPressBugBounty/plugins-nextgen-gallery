@@ -916,14 +916,25 @@ class SharedController extends ParentController {
 	/**
 	 * Get the first available image ID from an album's children (galleries or nested albums).
 	 *
+	 * Album IDs already walked are tracked in $visited so a cyclic or self-referential
+	 * album tree cannot recurse until the stack is exhausted. Pruning an already-walked
+	 * album never changes the result: it was explored in full and yielded no image.
+	 *
 	 * @param object $album The album object with sortorder property.
 	 * @param object $image_mapper The image mapper instance.
+	 * @param array  $visited Album IDs already visited (passed by reference).
 	 *
 	 * @return int|null The first image ID found, or null if none available.
 	 */
-	protected function get_first_image_from_album( $album, $image_mapper ) {
-		if ( empty( $album->sortorder ) ) {
+	protected function get_first_image_from_album( $album, $image_mapper, array &$visited = [] ) {
+		// A sortorder that failed to unserialize is truthy but not iterable.
+		if ( empty( $album->sortorder ) || ! is_array( $album->sortorder ) ) {
 			return null;
+		}
+
+		// Seed the starting album so an album listing itself is skipped too.
+		if ( ! empty( $album->id_field ) && ! empty( $album->{$album->id_field} ) ) {
+			$visited[ (int) $album->{$album->id_field} ] = true;
 		}
 
 		$gallery_mapper = GalleryMapper::get_instance();
@@ -934,7 +945,11 @@ class SharedController extends ParentController {
 			// Check if this is a nested album (prefixed with 'a').
 			if ( is_string( $entity_id ) && substr( $entity_id, 0, 1 ) === 'a' ) {
 				$nested_album_id = intval( substr( $entity_id, 1 ) );
-				$nested_album    = $album_mapper->find( $nested_album_id );
+				if ( ! $nested_album_id || isset( $visited[ $nested_album_id ] ) ) {
+					continue;
+				}
+				$visited[ $nested_album_id ] = true;
+				$nested_album                = $album_mapper->find( $nested_album_id );
 
 				if ( $nested_album ) {
 					// If nested album has a preview pic, use it.
@@ -944,7 +959,7 @@ class SharedController extends ParentController {
 
 					// Recursively check nested album's children.
 					if ( ! empty( $nested_album->sortorder ) ) {
-						$nested_preview = $this->get_first_image_from_album( $nested_album, $image_mapper );
+						$nested_preview = $this->get_first_image_from_album( $nested_album, $image_mapper, $visited );
 						if ( $nested_preview ) {
 							return $nested_preview;
 						}
@@ -960,16 +975,20 @@ class SharedController extends ParentController {
 						return $gallery->previewpic;
 					}
 
-					// If gallery has no preview pic, try to get its first image.
-					$image_mapper_instance = ImageMapper::get_instance();
-					$images                = $image_mapper_instance->find_all(
-						[
-							'galleryid' => $gallery_id,
-							'exclude'   => 0,
-							'limit'     => 1,
-							'order'     => 'ASC',
-						]
-					);
+					// find_all() takes condition strings, not a column map, and cannot express
+					// limit/order. pid breaks the tie when every row still sits at sortorder 0.
+					$images = ImageMapper::get_instance()
+						->select()
+						->where(
+							[
+								[ 'galleryid = %d', $gallery_id ],
+								[ 'exclude = %d', 0 ],
+							]
+						)
+						->order_by( 'sortorder' )
+						->order_by( 'pid' )
+						->limit( 1 )
+						->run_query();
 
 					if ( ! empty( $images ) ) {
 						return $images[0]->pid;

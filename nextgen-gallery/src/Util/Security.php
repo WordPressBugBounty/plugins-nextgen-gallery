@@ -396,4 +396,38 @@ class Security {
 
 		return $user && $user->has_cap( $capability_name );
 	}
+
+	/**
+	 * Whether the current user may manage a row owned by the given author.
+	 *
+	 * Ownership is never authorization on its own: the stored author id outlives the capability
+	 * that let the user create the row, so the required capability is checked first and ownership
+	 * only decides whether the cross-author capability is also needed. Every gallery and album
+	 * gate calls this so the rule cannot drift between them.
+	 *
+	 * @param int|string|null $author_id           Owning user id, as stored on the row.
+	 * @param string          $required_capability Capability this surface requires of every caller.
+	 * @param string          $unowned_capability  Capability that permits acting on someone else's row.
+	 * @return bool
+	 */
+	public static function can_manage_owned( $author_id, $required_capability = 'nextgen_edit_gallery', $unowned_capability = 'nextgen_edit_gallery_unowned' ) {
+		if ( ! self::is_allowed( $required_capability ) ) {
+			return false;
+		}
+
+		if ( self::is_allowed( $unowned_capability ) ) {
+			return true;
+		}
+
+		// Cast because the storage layer returns the author as a numeric string on some paths.
+		$author_id       = (int) $author_id;
+		$current_user_id = (int) \get_current_user_id();
+
+		// An unattributed row and a logged-out caller must not match on id 0.
+		if ( $author_id <= 0 || $current_user_id <= 0 ) {
+			return false;
+		}
+
+		return $current_user_id === $author_id;
+	}
 }

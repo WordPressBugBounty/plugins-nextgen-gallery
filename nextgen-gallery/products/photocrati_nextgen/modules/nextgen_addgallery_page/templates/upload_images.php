@@ -84,22 +84,29 @@
 			}
 
 			function update_frame_event_publisher() {
-				if (window.Frame_Event_Publisher) {
-					$.post(photocrati_ajax.url,
-						{'action': 'cookie_dump'},
-						(response) => {
-							if (typeof(response) != 'object')
-								response = JSON.parse(response);
-							const events = {};
-							for (const name in response.cookies) {
-								if (name.indexOf('X-Frame-Events') !== -1) {
-									const event_data = JSON.parse(response.cookies[name]);
-									events[name] = event_data;
-								}
-							}
-							window.Frame_Event_Publisher.broadcast(events)
-						}
+				if (!window.Frame_Event_Publisher) {
+					return;
+				}
+
+				// The frame-event cookies are set without HttpOnly, so they are readable
+				// here directly. get_events() is the canonical parser: it decodes the
+				// percent-encoded payload, keys each event by its bare id (the form
+				// delete_cookie() and the listeners expect) and expires the cookie it
+				// just consumed.
+				//
+				// Guarded because this runs inside the create-gallery promise chain, whose
+				// .catch() alerts: broadcast() reaches is_parent(), which reads
+				// window.parent.document unguarded and throws SecurityError when the parent
+				// is cross-origin or CSP-sandboxed. Failing to announce the event must not
+				// report the gallery creation that already succeeded as an error.
+				try {
+					window.Frame_Event_Publisher.broadcast(
+						window.Frame_Event_Publisher.get_events(document.cookie)
 					);
+				} catch (error) {
+					if (typeof(console) !== 'undefined') {
+						console.warn('NextGEN: could not broadcast frame events', error);
+					}
 				}
 			}
 

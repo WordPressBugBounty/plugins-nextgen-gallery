@@ -313,9 +313,7 @@ function media_upload_nextgen_form( $errors ) {
 		$storage    = \Imagely\NGG\DataStorage\Manager::get_instance();
 		foreach ( $picarray as $picid ) {
 			// TODO:Reduce SQL Queries.
-			$picture    = nggdb::find_image( $picid );
-			$dimensions = $storage->get_image_dimensions( $picid, 'thumb' );
-			extract( $dimensions );
+			$picture   = nggdb::find_image( $picid );
 			$thumb_url = $storage->get_image_url( $picid, 'thumb' );
 			?>
 

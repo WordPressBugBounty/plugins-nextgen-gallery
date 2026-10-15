@@ -431,11 +431,6 @@ class AlbumREST {
 			return false;
 		}
 
-		// Cross-author cap holders may manage any album.
-		if ( Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) {
-			return true;
-		}
-
 		if ( ! $request instanceof WP_REST_Request ) {
 			return true;
 		}
@@ -451,16 +446,30 @@ class AlbumREST {
 	}
 
 	/**
-	 * Determine whether the current user owns (or can manage) a specific album.
+	 * Determine whether the current user may manage a specific album.
 	 *
-	 * The `ngg_album` table has no `author` column; album ownership is derived from the
-	 * linked `extras_post_id` row in `wp_posts` (post_author). When no extras post exists yet
-	 * (orphan), fall back to the cross-author cap so unattributed albums can still be cleaned up.
+	 * Shared object-level ownership gate for every entry point that accepts an album id from a
+	 * request. The REST routes here, the XML-RPC album methods (`XMLRPC\Controller::get_album()`,
+	 * reached by `ngg.editAlbum` / `ngg.deleteAlbum`) and the Lightroom album tasks all call it so
+	 * authors cannot mutate or delete albums belonging to other authors (IDOR). See #1096.
+	 *
+	 * Holders of the cross-author `nextgen_edit_gallery_unowned` capability may manage any album.
+	 * Otherwise ownership is derived from the album's linked `extras_post_id` row in `wp_posts`
+	 * (post_author), because the `ngg_album` table has no `author` column. When no extras post
+	 * exists yet (orphan), only cross-author-cap holders may manage it.
+	 *
+	 * Callers must still enforce the base `nextgen_edit_album` capability themselves; this predicate
+	 * only narrows that capability to the albums the caller owns.
 	 *
 	 * @param int $album_id Album primary key.
 	 * @return bool
 	 */
-	protected static function current_user_can_manage_album( $album_id ) {
+	public static function current_user_can_manage_album( $album_id ) {
+		// Cross-author cap holders may manage any album.
+		if ( Security::is_allowed( 'nextgen_edit_gallery_unowned' ) ) {
+			return true;
+		}
+
 		$mapper = AlbumMapper::get_instance();
 		$album  = $mapper->find( $album_id );
 		if ( ! $album ) {
@@ -469,17 +478,10 @@ class AlbumREST {
 		}
 
 		$extras_post_id = isset( $album->extras_post_id ) ? (int) $album->extras_post_id : 0;
-		if ( $extras_post_id <= 0 ) {
-			// No backing post — only cross-author cap holders may manage.
-			return Security::is_allowed( 'nextgen_edit_gallery_unowned' );
-		}
+		$post           = $extras_post_id > 0 ? get_post( $extras_post_id ) : null;
 
-		$post = get_post( $extras_post_id );
-		if ( ! $post ) {
-			return Security::is_allowed( 'nextgen_edit_gallery_unowned' );
-		}
-
-		return (int) $post->post_author === (int) get_current_user_id();
+		// An orphan album has no author, so an id of 0 leaves the gate on the cross-author cap.
+		return Security::can_manage_owned( $post ? $post->post_author : 0, 'NextGEN Edit album' );
 	}
 
 	/**

@@ -48,7 +48,7 @@ $this->start_element( 'nextgen_gallery.gallery_container', 'container', $display
 	$image_count = count( $images );
 	for ( $i = 0; $i < $image_count; $i++ ) :
 		$image                   = $images[ $i ];
-		$thumb_size              = $storage->get_image_dimensions( $image, $thumbnail_size_name );
+		$thumb_size              = $storage->get_image_dimensions_or_default( $image, $thumbnail_size_name );
 		$show_tiktok_play_button = (
 			! empty( $image->meta_data ) &&
 			is_array( $image->meta_data ) &&
@@ -101,8 +101,10 @@ $this->start_element( 'nextgen_gallery.gallery_container', 'container', $display
 					title="<?php echo esc_attr( \Imagely\NGG\Display\I18N::ngg_plain_text_alt_title_attributes( $image->alttext ) ); ?>"
 					alt="<?php echo esc_attr( \Imagely\NGG\Display\I18N::ngg_plain_text_alt_title_attributes( $image->alttext ) ); ?>"
 					src="<?php echo esc_attr( $storage->get_cache_busted_image_url( $image, $thumbnail_size_name ) ); ?>"
+					<?php if ( $thumb_size ) : ?>
 					width="<?php echo esc_attr( $thumb_size['width'] ); ?>"
 					height="<?php echo esc_attr( $thumb_size['height'] ); ?>"
+					<?php endif; ?>
 					style="max-width:100%;"
 				/>
 			</a>

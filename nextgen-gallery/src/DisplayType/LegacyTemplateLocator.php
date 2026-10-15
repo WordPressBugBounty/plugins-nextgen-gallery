@@ -185,6 +185,26 @@ class LegacyTemplateLocator {
 			$custom_template = $template_name;
 		}
 
+		// SECURITY: refuse stream-wrapper syntax ("://") before any filesystem call.
+		// A value such as "phar:///path/to/image.png/x.php" makes the @file_exists()
+		// below open the named Phar archive. On PHP <= 7.4 opening a Phar unserialises
+		// its metadata object, turning an existence check into deserialization of
+		// attacker-chosen data (object injection); PHP 8.0+ defers that to an explicit
+		// getMetadata() call, so the file op is inert there. A template name is always a
+		// plain path relative to a template directory, so a wrapper is never legitimate.
+		if ( false !== strpos( str_replace( '\\', '/', (string) $custom_template ), '://' ) ) {
+			$this->report_refusal(
+				__METHOD__,
+				sprintf(
+					// Translators: %s is the rejected template name.
+					'The NextGEN Gallery legacy template "%s" was not loaded: its name contains stream-wrapper syntax ("://"), which a template name never uses.',
+					esc_html( (string) $custom_template )
+				),
+				'4.5.3'
+			);
+			return false;
+		}
+
 		// Ensure we have a PHP extension.
 		//
 		// SECURITY: this must be a strict suffix test. A substring test ('.php' anywhere)
