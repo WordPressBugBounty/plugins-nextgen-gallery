@@ -117,8 +117,8 @@ class ATPManager {
 	/**
 	 * Removes IGW preview/placeholder images from Yoast's sitemap
 	 *
-	 * @param $images
-	 * @param $post_id
+	 * @param array $images
+	 * @param int   $post_id
 	 * @return array
 	 */
 	public function remove_preview_images_from_yoast_sitemap( $images, $post_id ) {
@@ -403,7 +403,7 @@ class ATPManager {
 	/**
 	 * Adds the Attach To Post TinyMCE i18n strings
 	 *
-	 * @param $mce_translation
+	 * @param array $mce_translation
 	 * @return mixed
 	 */
 	public function add_attach_to_post_tinymce_i18n( $mce_translation ) {

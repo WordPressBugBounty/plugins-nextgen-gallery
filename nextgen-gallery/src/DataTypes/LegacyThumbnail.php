@@ -849,11 +849,11 @@ class LegacyThumbnail {
 			0,
 			0,
 			0,
-			$reflectedPart,
+			(int) $reflectedPart,
 			$width,
 			$reflectionHeight,
 			$width,
-			( $height - $reflectedPart )
+			(int) ( $height - $reflectedPart )
 		);
 		$this->imageFlipVertical();
 
@@ -862,7 +862,7 @@ class LegacyThumbnail {
 		imagealphablending( $this->workingImage, true );
 
 		for ( $i = 0;$i < $reflectionHeight;$i++ ) {
-			$colorToPaint = imagecolorallocatealpha( $this->workingImage, 255, 255, 255, ( $i / $reflectionHeight * -1 + 1 ) * $white );
+			$colorToPaint = imagecolorallocatealpha( $this->workingImage, 255, 255, 255, (int) ( ( $i / $reflectionHeight * -1 + 1 ) * $white ) );
 			imagefilledrectangle( $this->workingImage, 0, $height + $i, $width, $height + $i, $colorToPaint );
 		}
 
@@ -1095,7 +1095,7 @@ class LegacyThumbnail {
 		// Put text on the image, line-by-line.
 		$y_pos = $wmSize;
 		foreach ( $lines as $line ) {
-			imagettftext( $this->workingImage, $wmSize, 0, 0, $y_pos, $TextColor, $this->correct_gd_unc_path( $wmFontPath ), $line );
+			imagettftext( $this->workingImage, $wmSize, 0, 0, (int) $y_pos, $TextColor, $this->correct_gd_unc_path( $wmFontPath ), $line );
 			$y_pos += $line_height;
 		}
 
@@ -1124,10 +1124,10 @@ class LegacyThumbnail {
 	 *
 	 * Note: ImageTTFBBox() is unreliable with large font sizes
 	 *
-	 * @param $wmSize
-	 * @param $fontAngle
-	 * @param $wmFontPath
-	 * @param $text
+	 * @param int|float $wmSize
+	 * @param int|float $fontAngle
+	 * @param string    $wmFontPath
+	 * @param string    $text
 	 * @return array
 	 */
 	public function ImageTTFBBoxDimensions( $wmSize, $fontAngle, $wmFontPath, $text ) {

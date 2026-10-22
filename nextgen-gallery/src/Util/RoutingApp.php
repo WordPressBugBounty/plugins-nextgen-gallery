@@ -641,7 +641,7 @@ class RoutingApp {
 
 		if ( ! $found && isset( $_SERVER['REQUEST_URI'] ) ) {
 			$params = [];
-			$parsed = wp_parse_url( Router::sanitize_request_uri_for_routing( $_SERVER['REQUEST_URI'] ), PHP_URL_QUERY );
+			$parsed = wp_parse_url( Router::sanitize_request_uri_for_routing( $_SERVER['REQUEST_URI'] ), PHP_URL_QUERY ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- sanitize_request_uri_for_routing() unslashes and sanitizes; sanitize_text_field() would strip percent-encoded octets and break routing.
 			if ( is_string( $parsed ) ) {
 				parse_str( $parsed, $params );
 			}
@@ -906,7 +906,7 @@ class RoutingApp {
 
 		$router = Router::get_instance();
 
-		$_SERVER['NGG_ORIG_REQUEST_URI'] = isset( $_SERVER['REQUEST_URI'] ) ? Router::sanitize_request_uri_for_routing( $_SERVER['REQUEST_URI'] ) : '';
+		$_SERVER['NGG_ORIG_REQUEST_URI'] = isset( $_SERVER['REQUEST_URI'] ) ? Router::sanitize_request_uri_for_routing( $_SERVER['REQUEST_URI'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- sanitize_request_uri_for_routing() unslashes and sanitizes; sanitize_text_field() would strip percent-encoded octets and break routing.
 		$base_parts                      = wp_parse_url( $router->get_base_url( 'root' ) );
 		$new_request_uri                 = $router->join_paths(
 			( ! empty( $base_parts['path'] ) ? $base_parts['path'] : '' ),
@@ -928,7 +928,7 @@ class RoutingApp {
 		$_SERVER['HTTP_X_ORIGINAL_URL'] = $request_uri;
 		$_SERVER['UNENCODED_URL']       = $request_uri;
 		if ( isset( $_SERVER['PATH_INFO'] ) ) {
-			$_SERVER['ORIG_PATH_INFO'] = isset( $_SERVER['PATH_INFO'] ) ? Router::sanitize_request_uri_for_routing( $_SERVER['PATH_INFO'] ) : '';
+			$_SERVER['ORIG_PATH_INFO'] = isset( $_SERVER['PATH_INFO'] ) ? Router::sanitize_request_uri_for_routing( $_SERVER['PATH_INFO'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- sanitize_request_uri_for_routing() unslashes and sanitizes; sanitize_text_field() would strip percent-encoded octets and break routing.
 			unset( $_SERVER['PATH_INFO'] );
 		}
 	}
@@ -951,7 +951,7 @@ class RoutingApp {
 	 * The generated_url could look like:
 	 * http://localhost/dir/nggallery/show/slideshow
 	 *
-	 * @param $generated_url
+	 * @param string $generated_url
 	 * @return mixed
 	 */
 	public function add_post_permalink_to_url( $generated_url ) {

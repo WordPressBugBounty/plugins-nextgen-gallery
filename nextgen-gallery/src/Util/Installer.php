@@ -89,7 +89,7 @@ class Installer {
 	/**
 	 * Gets an instance of an installation handler
 	 *
-	 * @param $name
+	 * @param string $name
 	 * @return mixed
 	 */
 	public static function get_handler_instance( $name ) {

@@ -717,11 +717,11 @@ class ngg_Thumbnail {
 			0,
 			0,
 			0,
-			$reflectedPart,
+			(int) $reflectedPart,
 			$width,
 			$reflectionHeight,
 			$width,
-			( $height - $reflectedPart )
+			(int) ( $height - $reflectedPart )
 		);
 		$this->imageFlipVertical();
 
@@ -730,7 +730,7 @@ class ngg_Thumbnail {
 		imagealphablending( $this->workingImage, true );
 
 		for ($i=0;$i<$reflectionHeight;$i++) {
-			$colorToPaint = imagecolorallocatealpha( $this->workingImage, 255, 255, 255, ( $i/$reflectionHeight*-1+1 )*$white );
+			$colorToPaint = imagecolorallocatealpha( $this->workingImage, 255, 255, 255, (int) ( ( $i/$reflectionHeight*-1+1 )*$white ) );
 			imagefilledrectangle( $this->workingImage, 0, $height+$i, $width, $height+$i, $colorToPaint );
 		}
 
@@ -911,7 +911,7 @@ class ngg_Thumbnail {
 		imagefill( $this->workingImage, 0, 0, $bgText );
 		$wmTransp  = 127 -( $wmOpaque * 1.27 );
 		$rgb       = $this->hex2rgb( $color, false );
-		$TextColor = imagecolorallocatealpha( $this->workingImage, $rgb[0], $rgb[1], $rgb[2], $wmTransp );
+		$TextColor = imagecolorallocatealpha( $this->workingImage, $rgb[0], $rgb[1], $rgb[2], (int) $wmTransp );
 
 		// Create Text on image
 		imagettftext( $this->workingImage, $wmSize, 0, 0, abs( $TextSize[5] ), $TextColor, $wmFontPath, $this->watermarkText );

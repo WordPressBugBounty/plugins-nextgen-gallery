@@ -979,7 +979,7 @@ class AlbumREST {
 			'thumbnail'   => $thumbnail,
 			'created'     => $album->date_created,
 			'modified'    => $album->date_modified,
-			'displayType' => $album->display_type ?: 'photocrati-nextgen_basic_compact_album',
+			'displayType' => $album->display_type ? $album->display_type : 'photocrati-nextgen_basic_compact_album',
 		];
 	}
 
@@ -1022,7 +1022,7 @@ class AlbumREST {
 			'counter'               => $gallery_count,
 			'sortorder'             => $album->sortorder,
 			'extras_post_id'        => $album->extras_post_id,
-			'display_type'          => $album->display_type ?: 'photocrati-nextgen_basic_compact_album',
+			'display_type'          => $album->display_type ? $album->display_type : 'photocrati-nextgen_basic_compact_album',
 			// Fill uncustomized display types with current global values for the admin UI (not persisted).
 			'display_type_settings' => AlbumMapper::get_instance()->with_display_type_defaults( $album->display_type_settings ?? [] ),
 		];

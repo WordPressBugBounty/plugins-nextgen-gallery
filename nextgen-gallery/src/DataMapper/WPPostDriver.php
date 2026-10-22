@@ -513,7 +513,7 @@ class WPPostDriver extends DriverBase {
 	 * Ensure that the query args are set. We need to do this in case a third-party
 	 * plugin overrides our query.
 	 *
-	 * @param $query
+	 * @param \WP_Query $query
 	 */
 	public function set_query_args( $query ) {
 		if ( $query->get( 'datamapper' ) ) {

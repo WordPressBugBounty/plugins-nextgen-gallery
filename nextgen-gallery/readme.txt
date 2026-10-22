@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.5.3
+Stable tag: 4.5.4
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,12 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.5.4 - 10.22.2026 =
+* Fixed: PHP 8.2+ compatibility, so NextGEN no longer fills the error log with deprecation notices when it generates thumbnails, watermarks and reflections, or when it reads an image whose file is missing.
+* Fixed: A PHP warning on the Manage Gallery screen for a gallery whose author account has been deleted.
+* Fixed: A gallery shortcode with single-quoted attribute values could stop the next shortcode in the same post from rendering.
+* Fixed: Importing a folder on WordPress 6.9 no longer raises a deprecation notice for every image.
 
 = 4.5.3 - 10.15.2026 =
 * Fixed: Security hardening on image imports, so title and caption text stored inside an image's own metadata can no longer inject scripts into the gallery and lightbox. We recommend updating.

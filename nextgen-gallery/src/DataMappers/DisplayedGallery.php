@@ -29,6 +29,8 @@ class DisplayedGallery extends WPPostDriver {
 	public $model_class = 'Imagely\NGG\DataTypes\DisplayedGallery';
 
 	/**
+	 * WP object cache group.
+	 *
 	 * @var string
 	 */
 	protected $object_cache_group = 'ngg_displayed_galleries';

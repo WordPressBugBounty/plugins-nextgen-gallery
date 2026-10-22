@@ -46,8 +46,8 @@ class Gallery {
 	/**
 	 * Deletes the requested gallery
 	 *
-	 * @param $args
-	 * @param $assoc_args
+	 * @param array $args
+	 * @param array $assoc_args
 	 * @synopsis <gallery_id> [--delete-files]
 	 */
 	public function delete( $args, $assoc_args ) {
@@ -66,8 +66,8 @@ class Gallery {
 	/**
 	 * Change gallery attributes
 	 *
-	 * @param $args
-	 * @param $assoc_args
+	 * @param array $args
+	 * @param array $assoc_args
 	 * @synopsis <gallery_id> [--description=<description>] [--title=<title>]
 	 */
 	public function edit( $args, $assoc_args ) {
@@ -117,8 +117,8 @@ class Gallery {
 	/**
 	 * Lists all children (images) of a gallery.
 	 *
-	 * @param $args
-	 * @param $assoc_args
+	 * @param array $args
+	 * @param array $assoc_args
 	 * @synopsis <gallery_id>
 	 */
 	public function list_children( $args, $assoc_args ) {

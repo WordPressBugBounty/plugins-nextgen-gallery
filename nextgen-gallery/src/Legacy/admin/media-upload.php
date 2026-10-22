@@ -332,11 +332,11 @@ function media_upload_nextgen_form( $errors ) {
 				<tr><td>&nbsp;</td></tr>
 				<tr class="alttext">
 					<td class="label"><label for="image[<?php echo esc_attr( $picid ); ?>][alttext]"><?php esc_attr_e( 'Alt/Title text', 'nggallery' ); ?></label></td>
-					<td class="field"><input id="image[<?php echo esc_attr( $picid ); ?>][alttext]" name="image[<?php echo esc_attr( $picid ); ?>][alttext]" value="<?php echo esc_attr( stripslashes( $picture->alttext ) ); ?>" type="text"/></td>
+					<td class="field"><input id="image[<?php echo esc_attr( $picid ); ?>][alttext]" name="image[<?php echo esc_attr( $picid ); ?>][alttext]" value="<?php echo esc_attr( stripslashes( $picture->alttext ?? '' ) ); ?>" type="text"/></td>
 				</tr>
 				<tr class="caption">
 					<td class="label"><label for="image[<?php echo esc_attr( $picid ); ?>][description]"><?php esc_attr_e( 'Description', 'nggallery' ); ?></label></td>
-						<td class="field"><textarea name="image[<?php echo esc_attr( $picid ); ?>][description]" id="image[<?php echo esc_attr( $picid ); ?>][description]"><?php echo esc_attr( stripslashes( $picture->description ) ); ?></textarea></td>
+						<td class="field"><textarea name="image[<?php echo esc_attr( $picid ); ?>][description]" id="image[<?php echo esc_attr( $picid ); ?>][description]"><?php echo esc_attr( stripslashes( $picture->description ?? '' ) ); ?></textarea></td>
 				</tr>
 					<tr class="align">
 						<td class="label"><label for="image[<?php echo esc_attr( $picid ); ?>][align]"><?php esc_attr_e( 'Alignment', 'nggallery' ); ?></label></td>

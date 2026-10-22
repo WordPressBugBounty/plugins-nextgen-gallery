@@ -99,7 +99,7 @@ class MetaData {
 		$this->file_path = Manager::get_instance()->get_image_abspath( $this->image );
 
 		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-		if ( ! @file_exists( $this->file_path ) ) {
+		if ( ! $this->file_path || ! @file_exists( $this->file_path ) ) {
 			return;
 		}
 
@@ -695,8 +695,8 @@ class MetaData {
 		}
 
 		// let's add now the size of the image.
-		$meta['width']  = $this->size[0];
-		$meta['height'] = $this->size[1];
+		$meta['width']  = $this->size[0] ?? null;
+		$meta['height'] = $this->size[1] ?? null;
 
 		return $meta;
 	}

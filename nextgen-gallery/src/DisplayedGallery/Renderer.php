@@ -355,7 +355,7 @@ class Renderer {
   // phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
 		if ( is_array( $displayed_gallery->container_ids ) && in_array( 'All', $displayed_gallery->container_ids ) ) {
 			$lookup = false;
-		} elseif ( $displayed_gallery->source == 'albums' && ( $app->get_parameter( 'gallery' ) ) || $app->get_parameter( 'album' ) ) {
+		} elseif ( ( $displayed_gallery->source == 'albums' && ( $app->get_parameter( 'gallery' ) ) ) || $app->get_parameter( 'album' ) ) {
 			$lookup = false;
   // phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
 		} elseif ( in_array( $displayed_gallery->source, [ 'random', 'random_images' ] ) ) {

@@ -135,8 +135,8 @@ class Controller {
 	/**
 	 * Gets all dependencies for a particular resource that has been registered using wp_register_style/wp_register_script
 	 *
-	 * @param $handle
-	 * @param $type
+	 * @param string $handle The registered script/style handle.
+	 * @param string $type   The global holding the registry, 'wp_scripts' or 'wp_styles'.
 	 *
 	 * @return array
 	 */

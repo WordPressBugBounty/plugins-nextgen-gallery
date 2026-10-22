@@ -637,6 +637,7 @@ class GalleryREST {
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
 		$count_rows = $wpdb->get_results(
 			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- {$placeholders} is a list of %d built from count( $sanitized_ids ), and $sanitized_ids is passed to prepare().
 				"SELECT galleryid, COUNT(*) AS total FROM {$wpdb->nggpictures} WHERE galleryid IN ( {$placeholders} ) GROUP BY galleryid",
 				$sanitized_ids
 			)

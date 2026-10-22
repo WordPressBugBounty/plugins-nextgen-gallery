@@ -69,11 +69,15 @@ class Image extends TableDriver {
 	public $custom_post_name = 'mixin_nextgen_table_extras';
 
 	/**
+	 * WP object cache group.
+	 *
 	 * @var string
 	 */
 	protected $object_cache_group = 'ngg_images';
 
 	/**
+	 * TTL in seconds for WP object cache entries.
+	 *
 	 * @var int
 	 */
 	protected $object_cache_ttl = HOUR_IN_SECONDS;

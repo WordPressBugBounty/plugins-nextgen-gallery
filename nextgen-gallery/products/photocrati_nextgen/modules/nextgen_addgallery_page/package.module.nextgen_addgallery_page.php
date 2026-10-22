@@ -99,7 +99,7 @@ class A_NextGen_AddGallery_Ajax extends Mixin
 {
     public function create_new_gallery_action()
     {
-        $gallery_name = urldecode($this->param('gallery_name'));
+        $gallery_name = urldecode((string) $this->param('gallery_name'));
         $gallery_mapper = \Imagely\NGG\DataMappers\Gallery::get_instance();
         $retval = ['gallery_name' => esc_html($gallery_name), 'gallery_id' => null];
         if (!$this->validate_ajax_request('nextgen_upload_image', true)) {
@@ -125,7 +125,7 @@ class A_NextGen_AddGallery_Ajax extends Mixin
     {
         $created_gallery = false;
         $gallery_id = intval($this->param('gallery_id'));
-        $gallery_name = urldecode($this->param('gallery_name'));
+        $gallery_name = urldecode((string) $this->param('gallery_name'));
         $gallery_mapper = \Imagely\NGG\DataMappers\Gallery::get_instance();
         $retval = ['gallery_name' => esc_html($gallery_name)];
         if ($this->validate_ajax_request('nextgen_upload_image', true)) {
@@ -234,7 +234,7 @@ class A_NextGen_AddGallery_Ajax extends Mixin
         $retval = [];
         $html = [];
         if ($this->validate_ajax_request('nextgen_upload_image', true)) {
-            $dir = urldecode($this->param('dir'));
+            $dir = urldecode((string) $this->param('dir'));
             if ($dir) {
                 $fs = \Imagely\NGG\Util\Filesystem::get_instance();
                 $root = $this->get_import_root_abspath();
@@ -340,7 +340,7 @@ class A_NextGen_AddGallery_Ajax extends Mixin
         $retval = [];
         $created_gallery = false;
         $gallery_id = intval($this->param('gallery_id'));
-        $gallery_name = urldecode($this->param('gallery_name'));
+        $gallery_name = urldecode((string) $this->param('gallery_name'));
         $gallery_mapper = \Imagely\NGG\DataMappers\Gallery::get_instance();
         $image_mapper = \Imagely\NGG\DataMappers\Image::get_instance();
         // Get attachment_ids directly from $_REQUEST since param() doesn't handle arrays correctly

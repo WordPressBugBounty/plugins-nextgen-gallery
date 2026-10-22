@@ -65,7 +65,7 @@ class Serializable {
 	/**
 	 * Determines if a string may hold a serialized PHP object
 	 *
-	 * @param $value
+	 * @param mixed $value
 	 * @return bool
 	 */
 	public static function check_for_serialized_objects( $value ) {

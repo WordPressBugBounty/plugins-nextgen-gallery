@@ -155,8 +155,8 @@ class TableDriver extends DriverBase {
 	 * Orders the results of the query
 	 * This method may be used multiple of times to order by more than column
 	 *
-	 * @param $order_by
-	 * @param $direction
+	 * @param string $order_by
+	 * @param string $direction
 	 * @return self
 	 */
 	public function order_by( $order_by, $direction = 'ASC' ) {
@@ -165,8 +165,8 @@ class TableDriver extends DriverBase {
 			$order = 'rand()';
 		} elseif ( preg_match( "/^FIELD\\(\\s*[`']?([A-Za-z_][A-Za-z0-9_]*)[`']?\\s*,\\s*([0-9,\\s]*)\\)$/", (string) $order_by, $m ) ) {
 			// Security fix (SQLi): allow the legacy FIELD(<ident>, <int-list>) form used for preserving IN() result order. Both identifier and integer list are strictly validated so no user-controlled string can reach SQL here.
-			$ident   = $m[1];
-			$ints    = array_filter( array_map( 'intval', preg_split( '/\s*,\s*/', trim( $m[2] ) ) ) );
+			$ident = $m[1];
+			$ints  = array_filter( array_map( 'intval', preg_split( '/\s*,\s*/', trim( $m[2] ) ) ) );
 			if ( empty( $ints ) ) {
 				// No ids to order by; skip the clause to avoid an empty FIELD().
 				return $this;
@@ -645,8 +645,9 @@ class TableDriver extends DriverBase {
 		$id = $this->_wpdb()->insert( $this->get_table_name(), $table_data );
 
 		if ( $id ) {
-			$key    = $this->get_primary_key_column();
-			$retval = $entity->$key = intval( $this->_wpdb()->insert_id );
+			$key          = $this->get_primary_key_column();
+			$retval       = intval( $this->_wpdb()->insert_id );
+			$entity->$key = $retval;
 		}
 
 		// Remove the custom post if saving the normal table entry failed.

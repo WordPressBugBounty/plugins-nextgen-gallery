@@ -253,7 +253,7 @@ class Manager {
 	 * @param string $method
 	 * @param array  $args
 	 * @return mixed
-	 * @throws \Exception When method delegation fails
+	 * @throws \BadMethodCallException When neither this class nor the image helpers define the method.
 	 */
 	public function __call( $method, $args ) {
 		if ( preg_match( '/^get_(\w+)_(abspath|url|dimensions|html|size_params)$/', $method, $match ) ) {
@@ -262,6 +262,12 @@ class Manager {
 				$args[] = $match[1];
 				return $this->$method( $args );
 			}
+		}
+
+		// Calling a method this class does not have would only re-enter __call() until PHP runs
+		// out of stack, killing the request instead of reporting the bad call.
+		if ( ! method_exists( $this, $method ) ) {
+			throw new \BadMethodCallException( \sprintf( 'Call to undefined method %s::%s()', __CLASS__, esc_html( $method ) ) );
 		}
 
 		return $this->$method( $args );
@@ -1491,8 +1497,8 @@ class Manager {
 	 * Note: This only handles single-dimension rotation; at the time this method was written there are no known
 	 * camera manufacturers that both rotate and flip images.
 	 *
-	 * @param $image
-	 * @param bool  $save
+	 * @param int|object $image
+	 * @param bool       $save
 	 * @return bool True if no rotation was needed, or a needed rotation was applied; false only
 	 *              when a rotation was attempted and the write failed.
 	 */

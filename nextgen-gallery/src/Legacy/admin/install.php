@@ -62,6 +62,7 @@ function nggallery_dedupe_pictures_table( $nggpictures ) {
 	// further down in nggallery_install() -- once that's true the table can no longer contain
 	// duplicates, so skip re-scanning it on every request instead of unconditionally re-running
 	// this every time nggallery_install() executes.
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- One-off information_schema lookup during install; it must read the live schema, so no cache.
 	$unique_key_exists = $wpdb->get_var(
 		$wpdb->prepare(
 			'SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = %s AND index_name = %s',

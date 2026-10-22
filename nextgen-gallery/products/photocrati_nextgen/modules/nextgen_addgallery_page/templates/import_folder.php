@@ -77,7 +77,7 @@
 					// translators: {warning} is replaced by JS with the list of files that could not be imported.
 					$warning_message = __( 'Some files were skipped: {warning}', 'nggallery' );
 					?>
-					var manage_url_base = '<?php echo $manage_url_base; ?>';
+					var manage_url_base = '<?php echo $manage_url_base; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already escaped with esc_js() when assigned above. ?>';
 					var message = '<?php echo wp_kses_post( $message ); ?>';
 					message = message.replace('{count}', response.image_ids.length);
 					message = message.replace('{manage_url}', manage_url_base + response.gallery_id);

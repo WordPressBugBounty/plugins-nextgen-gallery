@@ -43,6 +43,8 @@ class Album extends TableDriver {
 	public $custom_post_name = 'mixin_nextgen_table_extras';
 
 	/**
+	 * WP object cache group.
+	 *
 	 * @var string
 	 */
 	protected $object_cache_group = 'ngg_albums';

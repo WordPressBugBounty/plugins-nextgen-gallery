@@ -16,6 +16,8 @@ use WP_Error;
 class GalleryPathValidation {
 
 	/**
+	 * Validates that a gallerypath is a safe relative path under the galleries root.
+	 *
 	 * @param mixed $gallerypath Raw value (typically string from form or JSON).
 	 * @return true|\WP_Error True if the path is a safe relative path under the galleries root.
 	 */

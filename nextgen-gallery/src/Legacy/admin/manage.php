@@ -284,8 +284,8 @@ class nggManageGallery {
 		$caption       = \Imagely\NGG\Display\I18N::ngg_plain_text_alt_title_attributes( $caption );
 		$caption       = esc_attr( $caption );
 		$date          = mysql2date( get_option( 'date_format' ), $picture->imagedate );
-		$width         = $picture->meta_data['width'];
-		$height        = $picture->meta_data['height'];
+		$width         = $picture->meta_data['width'] ?? null;
+		$height        = $picture->meta_data['height'] ?? null;
 		$pixels        = "{$width} x {$height} pixels";
 		$excluded      = checked( $picture->exclude, 1, false );
 		$exclude_label = __( 'Exclude ?', 'nggallery' );
@@ -611,7 +611,7 @@ class nggManageGallery {
 
 	public function render_gallery_author_field( $gallery ) {
 		$user   = get_userdata( $gallery->author );
-		$author = isset( $user->display_name ) ? $user->display_name : $user->user_nicename;
+		$author = isset( $user->display_name ) ? $user->display_name : ( $user->user_nicename ?? null );
 		include 'templates/manage_gallery/gallery_author_field.php';
 	}
 
@@ -1193,7 +1193,7 @@ class nggManageGallery {
 							// IIS hack: gallery paths can be mangled into \\wp-content\\blah\\ which causes later errors when validating the gallery path.
 							$value = str_replace( '\\\\', '/', sanitize_text_field( wp_unslash( $_POST[ $field ] ) ) );
 						} elseif ( $field === 'previewpic' || $field === 'pageid' || $field === 'pricelist_id' ) {
-							$value = (int) wp_unslash( $_POST[ $field ] );
+							$value = (int) wp_unslash( $_POST[ $field ] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to int.
 
 							// The preview <select> is built only from this gallery's images
 							// (render_gallery_preview_image_field()), so containment lived in the
@@ -1215,7 +1215,7 @@ class nggManageGallery {
 							}
 						} else {
 							// title/galdesc are pre-sanitized higher in this branch (sanitize_text_field + strip_tags allowlist) and written back into $_POST; read that processed value.
-							$value = wp_unslash( $_POST[ $field ] );
+							$value = wp_unslash( $_POST[ $field ] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Only title/galdesc reach here, already sanitized and written back into $_POST above.
 						}
 
 						$this->gallery->$field = $value;
@@ -1226,7 +1226,7 @@ class nggManageGallery {
 					// Mirror the REST save so the ecommerce requirement check (which reads this post meta) sees it.
 					// Only when the gallery is valid, so an invalid save does not mark the requirement complete.
 					if ( isset( $_POST['pricelist_id'] ) && ! empty( $this->gallery->extras_post_id ) && $this->gallery->is_valid() ) {
-						update_post_meta( $this->gallery->extras_post_id, 'pricelist_id', (int) wp_unslash( $_POST['pricelist_id'] ) );
+						update_post_meta( $this->gallery->extras_post_id, 'pricelist_id', (int) wp_unslash( $_POST['pricelist_id'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to int.
 					}
 
 					if ( ! $this->gallery->is_valid() ) {
@@ -1283,7 +1283,7 @@ class nggManageGallery {
 				return;
 			}
 
-			$parent_id     = isset( $_POST['parent_id'] ) ? (int) wp_unslash( $_POST['parent_id'] ) : 0;
+			$parent_id     = isset( $_POST['parent_id'] ) ? (int) wp_unslash( $_POST['parent_id'] ) : 0; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to int.
 			$gallery_title = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
 			$mapper        = GalleryMapper::get_instance();
 			$gallery       = $mapper->find( $this->gid );

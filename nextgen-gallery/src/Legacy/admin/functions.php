@@ -31,7 +31,8 @@ class nggAdmin {
 				if ( isset( $info['extension'] ) ) {
 					// phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict
 					if ( in_array( strtolower( $info['extension'] ), $ext ) ) {
-						if ( ! seems_utf8( $file ) ) {
+						// phpcs:ignore WordPress.WP.DeprecatedFunctions.seems_utf8Found -- Fallback for WP < 6.9, where wp_is_valid_utf8() does not exist.
+						if ( ! ( function_exists( 'wp_is_valid_utf8' ) ? wp_is_valid_utf8( $file ) : seems_utf8( $file ) ) ) {
 							$file = mb_convert_encoding( $file, 'UTF-8', 'ISO-8859-1' );
 						}
 

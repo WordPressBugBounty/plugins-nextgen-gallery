@@ -157,7 +157,8 @@ class Shortcodes {
 				while ( true ) {
 					// Parse out the shortcode, character-by-character.
 					$char = $content[ $index ];
-					if ( '"' === $char || "'" === $char && '=' === $last_found_char ) {
+					// A single quote opens a value only right after "=", and closes the value it opened.
+					if ( '"' === $char || ( "'" === $char && ( '=' === $last_found_char || "'" === $current_attribute_enclosure ) ) ) {
 						// Is this the closing quote for an already found attribute assignment?
 						if ( $found_attribute_assignment && $char === $current_attribute_enclosure ) {
 							$found_attribute_assignment  = false;

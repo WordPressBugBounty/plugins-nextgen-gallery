@@ -107,7 +107,7 @@ class Controller {
 	 * @return mixed Decoded value, or null if the parameter is absent or not valid JSON.
 	 */
 	public function param_json( $key ) {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- raw JSON, unslashed exactly once below before json_decode().
 		$raw = isset( $_REQUEST[ $key ] ) ? $_REQUEST[ $key ] : null;
 		if ( is_string( $raw ) ) {
 			// WordPress's wp_magic_quotes() applies addslashes() to $_REQUEST at startup,
@@ -3001,9 +3001,9 @@ class API {
 													/* translators: %1$s: image filename */
 													$image_error = __( 'No space available for image (%1$s).', 'nggallery' );
 												} catch ( \E_UploadException $e ) {
-													/* translators: %1$s: image filename */
 													$upload_error_message = str_replace( '%', '%%', $e->getMessage() );
-													$image_error          = $upload_error_message . __( ' (%1$s).', 'nggallery' );
+													/* translators: %1$s: image filename */
+													$image_error = $upload_error_message . __( ' (%1$s).', 'nggallery' );
 												} catch ( \E_No_Image_Library_Exception $e ) {
 													/* translators: %1$s: image filename */
 													$image_error = __( 'No image library present, image uploads will fail (%1$s).', 'nggallery' );

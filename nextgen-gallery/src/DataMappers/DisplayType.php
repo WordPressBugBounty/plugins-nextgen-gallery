@@ -42,6 +42,8 @@ class DisplayType extends WPPostDriver {
 	public $model_class = 'Imagely\NGG\DataTypes\DisplayType';
 
 	/**
+	 * WP object cache group.
+	 *
 	 * @var string
 	 */
 	protected $object_cache_group = 'ngg_display_types';

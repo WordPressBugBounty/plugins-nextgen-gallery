@@ -1134,7 +1134,7 @@ class DisplayedGallery extends Model {
 	/**
 	 * Ensures the 'id' attribute is copied to 'ID' as both are used frequently
 	 *
-	 * @param $value
+	 * @param null|int|string $value Optional value to set as the ID.
 	 * @return mixed
 	 */
 	public function id( $value = null ) {

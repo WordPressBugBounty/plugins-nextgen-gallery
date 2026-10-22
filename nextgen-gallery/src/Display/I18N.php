@@ -464,7 +464,7 @@ class I18N {
 	 * @return string The plain text.
 	 */
 	public static function ngg_plain_text_alt_title_attributes( $text ) {
-		$text = esc_attr( strip_tags( html_entity_decode( $text, ENT_QUOTES, 'UTF-8' ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.strip_tags_strip_tags
+		$text = esc_attr( strip_tags( html_entity_decode( (string) $text, ENT_QUOTES, 'UTF-8' ) ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.strip_tags_strip_tags
 		return $text;
 	}
 
@@ -480,7 +480,7 @@ class I18N {
 		// Keep decoding until no changes occur (i.e., fully decoded).
 		do {
 			$previous_content = $content;
-			$content          = html_entity_decode( $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+			$content          = html_entity_decode( (string) $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 			// phpcs:ignore Generic.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
 		} while ( $previous_content !== $content );
 

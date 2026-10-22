@@ -45,7 +45,7 @@ class nggMeta {
 
 		$imagePath = \Imagely\NGG\DataStorage\Manager::get_instance()->get_image_abspath( $this->image );
 
-		if ( !file_exists( $imagePath ) ) {
+		if ( ! $imagePath || ! file_exists( $imagePath ) ) {
 			return false;
 		}
 
@@ -592,7 +592,7 @@ class nggMeta {
 		$date = $this->exif_date2ts( $this->get_META( 'created_timestamp' ) );
 		if (!$date) {
 			$image_path = \Imagely\NGG\DataStorage\Manager::get_instance()->get_backup_abspath( $this->image );
-			if (file_exists( $image_path )) {
+			if ( $image_path && file_exists( $image_path ) ) {
 				$date = filectime( $image_path );
 			}
 		}
@@ -647,8 +647,8 @@ class nggMeta {
 		}
 
 		// let's add now the size of the image
-		$meta['width']  = $this->size[0];
-		$meta['height'] = $this->size[1];
+		$meta['width']  = $this->size[0] ?? null;
+		$meta['height'] = $this->size[1] ?? null;
 
 		return $meta;
 	}

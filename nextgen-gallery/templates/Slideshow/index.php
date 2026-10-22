@@ -16,8 +16,8 @@
  * @var string $placeholder
  * @var string $thumbnail_link
  * @var string $thumbnail_link_text
- */ ?>
-<?php
+ */
+
 $_slide_gallery_id = null;
 if ( isset( $displayed_gallery->container_ids ) && ! empty( $displayed_gallery->container_ids ) ) {
 	$_slide_gallery_id = reset( $displayed_gallery->container_ids );

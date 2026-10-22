@@ -52,7 +52,7 @@ class Shortcode_Preview {
 
 		// Check if user is logged in and has required capability.
 		// Allow users who can manage galleries or upload images to preview.
-		if ( ! current_user_can( 'NextGEN Manage gallery' ) && ! current_user_can( 'NextGEN Upload images' ) ) {
+		if ( ! current_user_can( 'NextGEN Manage gallery' ) && ! current_user_can( 'NextGEN Upload images' ) ) { // phpcs:ignore WordPress.WP.Capabilities.Unknown -- NextGEN capabilities, registered in Imagely\NGG\Util\Installer::set_role_caps().
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'nggallery' ) );
 		}
 

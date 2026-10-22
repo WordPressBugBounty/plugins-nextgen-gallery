@@ -2607,8 +2607,8 @@ class C_Gallery_Storage extends C_Component
      * Note: This only handles single-dimension rotation; at the time this method was written there are no known
      * camera manufacturers that both rotate and flip images.
      *
-     * @param $image
-     * @param bool  $save
+     * @param int|object $image
+     * @param bool       $save
      */
     public function correct_exif_rotation($image, $save = true)
     {
@@ -4408,6 +4408,18 @@ class C_NggLegacy_Thumbnail
      */
     public $watermarkText;
     /**
+     * New width of the image.
+     *
+     * @var int
+     */
+    public $newWidth;
+    /**
+     * New height of the image.
+     *
+     * @var int
+     */
+    public $newHeight;
+    /**
      * Image Resource ID for Watermark
      *
      * @var string
@@ -5013,12 +5025,12 @@ class C_NggLegacy_Thumbnail
         ImageAlphaBlending($this->workingImage, true);
         $colorToPaint = ImageColorAllocateAlpha($this->workingImage, 255, 255, 255, 0);
         ImageFilledRectangle($this->workingImage, 0, 0, $width, $newHeight, $colorToPaint);
-        imagecopyresampled($this->workingImage, $this->newImage, 0, 0, 0, $reflectedPart, $width, $reflectionHeight, $width, $height - $reflectedPart);
+        imagecopyresampled($this->workingImage, $this->newImage, 0, 0, 0, (int) $reflectedPart, $width, $reflectionHeight, $width, (int) ($height - $reflectedPart));
         $this->imageFlipVertical();
         imagecopy($this->workingImage, $this->newImage, 0, 0, 0, 0, $width, $height);
         imagealphablending($this->workingImage, true);
         for ($i = 0; $i < $reflectionHeight; $i++) {
-            $colorToPaint = imagecolorallocatealpha($this->workingImage, 255, 255, 255, ($i / $reflectionHeight * -1 + 1) * $white);
+            $colorToPaint = imagecolorallocatealpha($this->workingImage, 255, 255, 255, (int) (($i / $reflectionHeight * -1 + 1) * $white));
             imagefilledrectangle($this->workingImage, 0, $height + $i, $width, $height + $i, $colorToPaint);
         }
         if ($border == true) {
@@ -5189,7 +5201,7 @@ class C_NggLegacy_Thumbnail
         // attempt adding a new word until the width is too large; then start a new line and start again
         foreach ($words as $word) {
             // sanitize the text being input; imagettftext() can be sensitive
-            $TextSize = $this->ImageTTFBBoxDimensions($wmSize, 0, $this->correct_gd_unc_path($wmFontPath), $line . preg_replace('~^(&([a-zA-Z0-9]);)~', htmlentities('${1}'), mb_convert_encoding($word, 'HTML-ENTITIES', 'UTF-8')));
+            $TextSize = $this->ImageTTFBBoxDimensions($wmSize, 0, $this->correct_gd_unc_path($wmFontPath), $line . preg_replace('~^(&([a-zA-Z0-9]);)~', htmlentities('${1}'), htmlspecialchars_decode(htmlentities($word, ENT_QUOTES, 'UTF-8'))));
             if ($watermark_image_width == 0) {
                 $watermark_image_width = $TextSize['width'];
             }
@@ -5217,7 +5229,7 @@ class C_NggLegacy_Thumbnail
         // Put text on the image, line-by-line
         $y_pos = $wmSize;
         foreach ($lines as $line) {
-            imagettftext($this->workingImage, $wmSize, 0, 0, $y_pos, $TextColor, $this->correct_gd_unc_path($wmFontPath), $line);
+            imagettftext($this->workingImage, $wmSize, 0, 0, (int) $y_pos, $TextColor, $this->correct_gd_unc_path($wmFontPath), $line);
             $y_pos += $line_height;
         }
         $this->watermarkImgPath = $this->workingImage;
@@ -5244,10 +5256,10 @@ class C_NggLegacy_Thumbnail
      *
      * Note: ImageTTFBBox() is unreliable with large font sizes
      *
-     * @param $wmSize
-     * @param $fontAngle
-     * @param $wmFontPath
-     * @param $text
+     * @param int|float $wmSize
+     * @param int|float $fontAngle
+     * @param string    $wmFontPath
+     * @param string    $text
      * @return array
      */
     public function ImageTTFBBoxDimensions($wmSize, $fontAngle, $wmFontPath, $text)

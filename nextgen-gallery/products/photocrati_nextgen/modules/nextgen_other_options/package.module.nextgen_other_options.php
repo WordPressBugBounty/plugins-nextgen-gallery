@@ -21,7 +21,7 @@ class A_Custom_Lightbox_Form extends Mixin
     /**
      * Renders the lightbox library code field.
      *
-     * @param $lightbox
+     * @param \Imagely\NGG\DataTypes\Lightbox $lightbox
      * @return mixed
      */
     public function _render_lightbox_library_code_field($lightbox)
@@ -31,7 +31,7 @@ class A_Custom_Lightbox_Form extends Mixin
     /**
      * Renders the lightbox library styles field.
      *
-     * @param $lightbox
+     * @param \Imagely\NGG\DataTypes\Lightbox $lightbox
      * @return mixed
      */
     public function _render_lightbox_library_styles_field($lightbox)
@@ -41,7 +41,7 @@ class A_Custom_Lightbox_Form extends Mixin
     /**
      * Renders the lightbox library scripts field.
      *
-     * @param $lightbox
+     * @param \Imagely\NGG\DataTypes\Lightbox $lightbox
      * @return mixed
      */
     public function _render_lightbox_library_scripts_field($lightbox)

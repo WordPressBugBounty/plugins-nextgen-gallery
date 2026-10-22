@@ -1539,8 +1539,10 @@ class ImageREST {
 
 		if ( is_multisite() && ! is_main_site() ) {
 			$upload_dir       = wp_upload_dir();
-			$blog_upload_base = trailingslashit( wp_normalize_path( realpath( $upload_dir['basedir'] ) ?: $upload_dir['basedir'] ) );
-			$resolved_root    = wp_normalize_path( realpath( $root ) ?: $root );
+			$basedir_realpath = realpath( $upload_dir['basedir'] );
+			$blog_upload_base = trailingslashit( wp_normalize_path( $basedir_realpath ? $basedir_realpath : $upload_dir['basedir'] ) );
+			$root_realpath    = realpath( $root );
+			$resolved_root    = wp_normalize_path( $root_realpath ? $root_realpath : $root );
 			$normalized_root  = trailingslashit( $resolved_root );
 
 			if ( strpos( $normalized_root, $blog_upload_base ) !== 0 ) {

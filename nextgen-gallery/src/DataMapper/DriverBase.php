@@ -67,8 +67,12 @@ abstract class DriverBase {
 	 */
 	protected $object_cache_group = '';
 
-	/** @var string|null Memoized cache version for this request; reset by flush_query_cache(). */
-	private ?string $cache_version_memo = null;
+	/**
+	 * Memoized cache version for this request; reset by flush_query_cache().
+	 *
+	 * @var string|null
+	 */
+	private ?string $cache_version_memo = null; // phpcs:ignore PHPCompatibility.Classes.NewTypedProperties.Found -- Plugin requires PHP 7.4 (nggallery.php header), which supports typed properties.
 
 	/**
 	 * TTL in seconds for WP object cache entries.
@@ -109,6 +113,8 @@ abstract class DriverBase {
 	 * The caller is responsible for ensuring the SQL is safe (no user input).
 	 *
 	 * @param string $sql Raw SQL condition, e.g. 'exclude = 0 OR exclude IS NULL'.
+	 *
+	 * @phpcs:ignore Squiz.Commenting.FunctionComment.InvalidNoReturn -- This base stub always throws; @return documents the contract TableDriver implements.
 	 * @return self
 	 * @throws \BadMethodCallException When called on a driver that does not support raw SQL.
 	 */
@@ -292,7 +298,7 @@ abstract class DriverBase {
 	/**
 	 * Notes that a particular columns is serialized, and should be deserialized when converted to an entity
 	 *
-	 * @param $column
+	 * @param string $column
 	 */
 	public function add_serialized_column( $column ) {
 		$this->_serialized_columns[] = $column;

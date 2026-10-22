@@ -742,7 +742,7 @@ class Controller {
 		if ( ! $origin_url
 		&& ! empty( $displayed_gallery->display_settings['original_display_type'] )
 		&& ! empty( $_SERVER['NGG_ORIG_REQUEST_URI'] ) ) {
-			$origin_url = Router::sanitize_request_uri_for_routing( $_SERVER['NGG_ORIG_REQUEST_URI'] );
+			$origin_url = Router::sanitize_request_uri_for_routing( $_SERVER['NGG_ORIG_REQUEST_URI'] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- sanitize_request_uri_for_routing() unslashes and sanitizes; sanitize_text_field() would strip percent-encoded octets and break routing.
 		}
 
 		$url = $origin_url ? $origin_url : $app->get_app_url( false, true );
@@ -915,7 +915,7 @@ class Controller {
 	/**
 	 * Deletes duplicate display types.
 	 *
-	 * @param $name
+	 * @param string $name Display type name.
 	 */
 	public function delete_duplicates( $name ) {
 		$mapper  = DisplayTypeMapper::get_instance();
