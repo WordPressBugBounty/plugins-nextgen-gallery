@@ -13,6 +13,7 @@ use Imagely\NGG\DataMappers\Image as ImageMapper;
 use Imagely\NGG\DataStorage\Manager as StorageManager;
 use Imagely\NGG\DataTypes\Gallery;
 use Imagely\NGG\Util\Filesystem;
+use Imagely\NGG\Util\Security;
 
 // Exit if accessed directly.
 if ( ! defined( 'ABSPATH' ) ) {
@@ -99,6 +100,21 @@ trait ConvertGalleryTrait {
 			}
 
 			try {
+				// Each id is an object reference - taken straight from the request on the single
+				// route, and out of the named post's own content on the bulk one - so it needs an
+				// object-level check. The route's capability gate authorizes creating a gallery
+				// and editing the post, never the attachment whose bytes are about to be read and
+				// republished at a public URL, and a caller is free to put any id into a draft of
+				// their own and convert it.
+				if ( ! Security::can_read_attachment( $attachment_id ) ) {
+					$errors[] = sprintf(
+						// translators: %d is the attachment ID.
+						__( 'You do not have permission to import attachment ID %d', 'nggallery' ),
+						(int) $attachment_id
+					);
+					continue;
+				}
+
 				// Import the attached file (the smaller derivative for a downscaled upload);
 				// the untouched original is promoted into the backup below.
 				$abspath = get_attached_file( $attachment_id );
@@ -194,11 +210,17 @@ trait ConvertGalleryTrait {
 		// If no images were imported, delete the gallery and return error.
 		if ( empty( $image_ids ) ) {
 			$gallery_mapper->destroy( $gallery_id );
+
+			// Carry the per-image reasons, which this branch used to drop. When every image was
+			// refused for authorization the generic sentence is the only thing the admin sees,
+			// and it reads as "conversion is broken" rather than "those images are not yours".
+			$error = __( 'No images could be imported. The gallery was not created.', 'nggallery' );
+			if ( ! empty( $errors ) ) {
+				$error .= ' ' . implode( ' ', $errors );
+			}
+
 			return [
-				'error' => __(
-					'No images could be imported. The gallery was not created.',
-					'nggallery'
-				),
+				'error' => $error,
 			];
 		}
 
@@ -388,7 +410,19 @@ trait ConvertGalleryTrait {
 				$created_result = $this->create_imagely_gallery_from_wp_gallery( $passed_data );
 
 				if ( isset( $created_result['error'] ) && ! empty( $created_result['error'] ) ) {
-					// Continue processing other blocks even if one fails.
+					// Continue processing other blocks even if one fails - but do not drop the
+					// reason on the floor. Before the per-attachment authorization check existed a
+					// failure here meant I/O or an exception; now a bulk run across a
+					// multi-author site refuses routinely, so this became the branch the common
+					// case ends in, and it reported nothing at all.
+					\Imagely\NGG\DataStorage\Manager::get_instance()->log_path_refusal(
+						sprintf(
+							'NextGEN Gallery: gallery block in post #%1$d was not converted: %2$s',
+							(int) $post_id,
+							(string) $created_result['error']
+						),
+						\Imagely\NGG\DataStorage\Manager::REFUSAL_ATTACH_IMAGE
+					);
 					continue;
 				} else {
 					// Replace the core/gallery block with imagely/main-block.

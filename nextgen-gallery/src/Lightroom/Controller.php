@@ -484,6 +484,8 @@ class Controller {
 			$refused        = false;
 			$expired        = false;
 			$not_authorized = false;
+			$refused_count  = 0;
+			$unclaimed      = 0;
 			$cutoff         = time() - API::MAX_JOB_AGE;
 
 			foreach ( $job_list as $key => $job ) {
@@ -494,6 +496,7 @@ class Controller {
 				// needs an authenticated enqueue, so a leaked job_handler_url expires.
 				if ( $created <= 0 || $created <= $cutoff ) {
 					$expired = true;
+					++$refused_count;
 
 					continue;
 				}
@@ -511,8 +514,9 @@ class Controller {
 				// base NextGEN capability, and a non-owner additionally needs the
 				// others-gallery capability - the same model this file already uses at
 				// enqueue time.
-				$job_owner = isset( $job['data']['user'] ) ? (int) $job['data']['user'] : 0;
-				$owns_job  = false;
+				$job_owner      = isset( $job['data']['user'] ) ? (int) $job['data']['user'] : 0;
+				$owns_job       = false;
+				$job_lacks_caps = false;
 
 				if ( $authenticated ) {
 					$is_owner = $job_owner > 0 && $job_owner === (int) $user_obj->ID;
@@ -522,6 +526,7 @@ class Controller {
 
 					if ( ! $owns_job ) {
 						$not_authorized = true;
+						$job_lacks_caps = true;
 					}
 				}
 
@@ -530,13 +535,29 @@ class Controller {
 					$executable[ $key ] = $job;
 				} else {
 					$refused = true;
+					++$refused_count;
+
+					// Turned away only because this request's token is not this job's.
+					if ( ! $job_lacks_caps ) {
+						++$unclaimed;
+					}
 				}
 			}
 
-			// Refusals are logged even when another job ran, since otherwise a refusal is
-			// invisible and token probing leaves no trace. Rate limited because this
-			// endpoint is anonymous and a stale job makes $expired true on every request:
-			// without the bound, any caller could grow the error log at will.
+			// A post-back request carries one job's token, so once a job ran, the request has
+			// proven it belongs to that job and the rest of the queue is simply not its own:
+			// a token that matched job A is no guess at job B. Logging those as refusals put a
+			// warning in the log on every multi-job publish (nextgen-gallery-pro#880). A token that matched
+			// nothing still counts, since that is the token-probing signal.
+			if ( $refused && ! empty( $executable ) ) {
+				$refused        = false;
+				$refused_count -= $unclaimed;
+			}
+
+			// Expiry and capability refusals are logged even when another job ran, since
+			// otherwise they are invisible. Rate limited because this endpoint is anonymous
+			// and a stale job makes $expired true on every request: without the bound, any
+			// caller could grow the error log at will.
 			if ( ( $expired || $refused || $not_authorized ) && ! get_transient( self::REFUSAL_LOG_THROTTLE ) ) {
 				set_transient( self::REFUSAL_LOG_THROTTLE, 1, 5 * MINUTE_IN_SECONDS );
 
@@ -559,7 +580,7 @@ class Controller {
 
 				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 				error_log(
-					'NextGEN Gallery: Lightroom refused ' . ( count( $job_list ) - count( $executable ) ) . ' job(s): '
+					'NextGEN Gallery: Lightroom refused ' . $refused_count . ' job(s): '
 					. implode( '; ', $causes )
 					. '. Further refusals are not logged for 5 minutes.'
 				);

@@ -43,6 +43,92 @@ shutterReloaded = {
 		return document.getElementById(a);
 	},
 
+	// SECURITY (#1089): the caption title is concatenated straight into
+	// D.innerHTML below, so an attacker-stored caption would execute as HTML.
+	// safe() filters it; esc() is its fallback when DOMParser is unavailable.
+	esc: function (s) {
+		return String(s == null ? '' : s)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	},
+
+	// Captions are stored as markup (bold, links) and arrive entity-decoded in the
+	// anchor title. Parse inertly (a DOMParser document runs no scripts or event
+	// handlers and loads no images) and keep only the formatting tags the Fancybox
+	// sanitizer allows, plus same-origin images as in Simplelightbox and Thickbox;
+	// href/src must pass isSafeUrl(). Without DOMParser, fall back to escaped plain
+	// text.
+	allowedTags: {
+		A: ['href', 'class', 'title'],
+		BR: [],
+		EM: [],
+		I: [],
+		STRONG: [],
+		B: [],
+		U: [],
+		P: ['class'],
+		DIV: ['class'],
+		SPAN: ['class'],
+		IMG: ['src', 'alt', 'title']
+	},
+
+	isSafeUrl: function (value, sameOrigin) {
+		try {
+			var u = new URL(value, document.baseURI);
+			var scheme = u.protocol.toLowerCase();
+			if (scheme === 'mailto:') {
+				return true;
+			}
+			if (scheme === 'http:' || scheme === 'https:') {
+				return !sameOrigin || u.origin === window.location.origin;
+			}
+			return false;
+		} catch (e) {
+			return false;
+		}
+	},
+
+	safe: function (s) {
+		var t = shutterReloaded,
+			doc,
+			els,
+			i,
+			j,
+			el,
+			allowed,
+			name;
+		if (s == null || s === '') {
+			return '';
+		}
+		if (typeof DOMParser === 'undefined') {
+			return t.esc(s);
+		}
+		doc = new DOMParser().parseFromString(String(s), 'text/html');
+		els = doc.body.querySelectorAll('*');
+		for (i = 0; i < els.length; i++) {
+			el = els[i];
+			allowed = t.allowedTags[el.tagName];
+			if (!allowed) {
+				el.parentNode && el.parentNode.removeChild(el);
+				continue;
+			}
+			for (j = el.attributes.length - 1; j >= 0; j--) {
+				name = el.attributes[j].name;
+				if (
+					allowed.indexOf(name) === -1 ||
+					((name === 'href' || name === 'src') &&
+						!t.isSafeUrl(el.attributes[j].value, name === 'src'))
+				) {
+					el.removeAttribute(name);
+				}
+			}
+		}
+		return doc.body.innerHTML;
+	},
+
 	Init: function (a) {
 		var L, T, ext, i, setid, inset, shfile, shMenuPre, k, img;
 		shutterLinks = {};
@@ -248,7 +334,7 @@ shutterReloaded = {
 			'<div id="shWrap"><img src="' +
 			shutterLinks[ln].link +
 			'" id="shTopImg" onload="shutterReloaded.ShowImg();" onclick="shutterReloaded.hideShutter();" /><div id="shTitle">' +
-			shutterLinks[ln].title +
+			shutterReloaded.safe(shutterLinks[ln].title) +
 			'</div></div>';
 
 		window.setTimeout(function () {

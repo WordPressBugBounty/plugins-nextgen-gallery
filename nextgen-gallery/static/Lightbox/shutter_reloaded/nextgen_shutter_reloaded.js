@@ -1,4 +1,83 @@
 jQuery(function ($) {
+	// SECURITY (#1187): Shutter Reloaded writes the stored title into innerHTML. Only links
+	// NextGEN rendered (class shutterset_<gallery>) may carry caption markup, and only after
+	// sanitizeTitle(); any other link's title, e.g. a comment link picked up by a global
+	// lightbox context, is escaped to plain text.
+	var isNextgenLink = function (L) {
+		return L.className.indexOf('shutterset_') !== -1;
+	};
+
+	var escapeTitle = function (s) {
+		return String(s)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	};
+
+	// NextGEN captions are stored as markup and arrive entity-decoded in the title, and a post
+	// author can set the shutterset_ class too, so they are filtered rather than trusted: parsed
+	// inertly (a DOMParser document runs no handlers and loads nothing), keeping the same tags,
+	// attributes and URL rules as the Shutter cores' sanitizer from #1132. Without DOMParser the
+	// title falls back to plain text.
+	var allowedTags = {
+		A: ['href', 'class', 'title'],
+		BR: [],
+		EM: [],
+		I: [],
+		STRONG: [],
+		B: [],
+		U: [],
+		P: ['class'],
+		DIV: ['class'],
+		SPAN: ['class'],
+		IMG: ['src', 'alt', 'title']
+	};
+
+	var isSafeUrl = function (value, sameOrigin) {
+		try {
+			var u = new URL(value, document.baseURI);
+			var scheme = u.protocol.toLowerCase();
+			if (scheme === 'mailto:') {
+				return true;
+			}
+			if (scheme === 'http:' || scheme === 'https:') {
+				return !sameOrigin || u.origin === window.location.origin;
+			}
+			return false;
+		} catch (e) {
+			return false;
+		}
+	};
+
+	var sanitizeTitle = function (s) {
+		if (typeof DOMParser === 'undefined') {
+			return escapeTitle(s);
+		}
+		var doc = new DOMParser().parseFromString(String(s), 'text/html');
+		var els = doc.body.querySelectorAll('*');
+		for (var i = 0; i < els.length; i++) {
+			var el = els[i];
+			var allowed = allowedTags[el.tagName];
+			if (!allowed) {
+				el.parentNode && el.parentNode.removeChild(el);
+				continue;
+			}
+			for (var j = el.attributes.length - 1; j >= 0; j--) {
+				var name = el.attributes[j].name;
+				if (
+					allowed.indexOf(name) === -1 ||
+					((name === 'href' || name === 'src') &&
+						!isSafeUrl(el.attributes[j].value, name === 'src'))
+				) {
+					el.removeAttribute(name);
+				}
+			}
+		}
+		return doc.body.innerHTML;
+	};
+
 	var initTimeout;
 	var callback = function () {
 		var selector = nextgen_lightbox_filter_selector($, $([]));
@@ -17,6 +96,11 @@ jQuery(function ($) {
 						shutterLinks[i].tiktok_play_url = $(L).data('tiktok-play-url');
 						shutterLinks[i].tiktok_share_url = $(L).data('tiktok-share-url');
 						shutterLinks[i].video_url = $(L).attr('data-video-url');
+						if (shutterLinks[i].title) {
+							shutterLinks[i].title = isNextgenLink(L)
+								? sanitizeTitle(shutterLinks[i].title)
+								: escapeTitle(shutterLinks[i].title);
+						}
 					}
 				}
 			};
@@ -115,7 +199,9 @@ jQuery(function ($) {
 		// Debounce Init so ready + refreshed in quick succession (e.g. admin live preview) only run once
 		clearTimeout(initTimeout);
 		initTimeout = setTimeout(function () {
-			shutterReloaded.Init();
+			// 'sh': only links whose class contains "shutter" (NextGEN's shutterset_<gallery> and
+			// the shutterset class added above), not every image link on the page (#1187).
+			shutterReloaded.Init('sh');
 		}, 80);
 	};
 

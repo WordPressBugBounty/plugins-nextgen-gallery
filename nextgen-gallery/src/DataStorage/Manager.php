@@ -61,6 +61,7 @@ class Manager {
 	const REFUSAL_MASS_ASSIGNMENT = 'mass_assignment';
 	const REFUSAL_DIRS_DEGENERATE = 'deletion_dirs_degenerate';
 	const REFUSAL_URL_UNMAPPED    = 'url_unmapped';
+	const REFUSAL_ATTACH_IMAGE    = 'attach_image';
 
 	/**
 	 * Refusal text shared by both copies of generate_image_size(), so the mirrored pair cannot
@@ -3603,11 +3604,26 @@ class Manager {
 	public function copy_to_media_library( $image ) {
 		$retval = false;
 
-		// Get the image.
-		if ( is_int( $image ) ) {
-			$imageId = $image;
-			$mapper  = ImageMapper::get_instance();
-			$image   = $mapper->find( $imageId );
+		// Resolve the image unless an entity was handed over already. A non-scalar is refused
+		// rather than cast: casting an object to int warns and evaluates to 1, which would answer
+		// the authorization question below about a row the caller did not name.
+		if ( ! $image instanceof Image ) {
+			$image = is_scalar( $image )
+				? ImageMapper::get_instance()->find( (int) $image )
+				: null;
+		}
+
+		if ( ! $image ) {
+			return $retval;
+		}
+
+		// This is the sink: it copies the gallery file into wp-content/uploads and inserts an
+		// attachment row, which republishes it at a public URL. The check lives here rather than
+		// only in set_post_thumbnail() because the deprecated POPE shim C_Gallery_Storage exposes
+		// this method directly to third-party code, so gating only the caller left a way around
+		// it.
+		if ( ! self::current_user_can_attach_image( $image ) ) {
+			return $retval;
 		}
 
 		if ( $image ) {
@@ -5078,6 +5094,64 @@ class Manager {
 	}
 
 	/**
+	 * Whether the current user may publish a NextGEN image into the media library.
+	 *
+	 * Copying a gallery image into wp-content/uploads and giving it an attachment row makes it
+	 * reachable at a public URL, so the caller has to be authorized for the gallery the image came
+	 * from. Ownership is not authorization on its own, which is why this goes through
+	 * Security::can_manage_owned() rather than comparing the author directly - that helper tests
+	 * the live capability first, so a delegated manager whose capability was revoked stops
+	 * passing for galleries they once authored.
+	 *
+	 * Uses can_manage_owned()'s default required capability, matching every other gallery gate in
+	 * the tree. It deliberately does *not* require 'NextGEN Attach Interface' here: that is the
+	 * capability gating the attach *surfaces*, and each of them checks it at its own entry point
+	 * (BlockManager, XMLRPC\Controller, nggPostThumbnail). Requiring it in the sink as well made
+	 * this the only gate in the tree whose required capability disagreed with its route, which is
+	 * the divergence can_manage_owned() was introduced to remove, and refused a delegated manager
+	 * holding 'NextGEN Manage gallery' for a gallery they authored themselves.
+	 *
+	 * A gallery that no longer exists leaves no author to compare against, so it is passed as
+	 * author 0, which only the cross-author capability can satisfy.
+	 *
+	 * @param Image $image Resolved image entity.
+	 * @return bool
+	 */
+	protected static function current_user_can_attach_image( $image ) {
+		if ( ! $image instanceof Image ) {
+			return false;
+		}
+
+		$gallery = GalleryMapper::get_instance()->find( (int) $image->galleryid );
+
+		$allowed = Security::can_manage_owned( $gallery ? $gallery->author : 0 );
+
+		if ( ! $allowed ) {
+			// Callers only see false, which is byte-identical to "no such image" and "copy
+			// failed", so without this line a refusal is indistinguishable from a broken file and
+			// leaves support nothing to grep. Deliberately not throttled: these are authenticated,
+			// low-frequency operations, and one line per hour would hide the 2nd..Nth refusal.
+			//
+			// Note this also fires with no current user at all - WP-CLI, cron, a programmatic add -
+			// because can_manage_owned() resolves the capability through wp_get_current_user().
+			// Third-party code calling the deprecated C_Gallery_Storage shim from such a context
+			// now gets false where it used to get an attachment id, and this is the only notice it
+			// will get.
+			self::get_instance()->log_path_refusal(
+				sprintf(
+					'NextGEN Gallery: refused to publish image #%1$d from gallery #%2$d into the media library - user #%3$d lacks the gallery-management capability or does not own it.',
+					(int) $image->pid,
+					$gallery ? (int) $gallery->{$gallery->id_field} : 0,
+					(int) \get_current_user_id()
+				),
+				self::REFUSAL_ATTACH_IMAGE
+			);
+		}
+
+		return $allowed;
+	}
+
+	/**
 	 * Sets a NGG image as a post thumbnail for the given post
 	 *
 	 * @param int   $postId
@@ -5094,14 +5168,34 @@ class Manager {
 			$postId = isset( $post->ID ) ? $post->ID : $post->post_id;
 		}
 
-		// Get the image.
-		if ( is_int( $image ) ) {
-			$imageId = $image;
-			$mapper  = ImageMapper::get_instance();
-			$image   = $mapper->find( $imageId );
+		// Resolve the image through the mapper unless an entity was handed over already.
+		//
+		// Was `is_int( $image )`, which only caught a literal integer. The block-editor hook
+		// reads this id out of a JSON body, so it arrives as a numeric *string* - and nothing
+		// stopped a body from sending an object instead, whose attacker-chosen `pid` then flowed
+		// straight into the copy below.
+		//
+		// An id is the only other thing accepted. A non-scalar is refused outright rather than
+		// cast: casting an object to int emits a conversion warning and evaluates to 1, so the
+		// request would be answered about image 1 - refused today only because that row rarely
+		// exists, which is not a check.
+		if ( ! $image instanceof Image ) {
+			$image = is_scalar( $image )
+				? ImageMapper::get_instance()->find( (int) $image )
+				: null;
 		}
 
-		if ( $image && $postId ) {
+		if ( ! $image ) {
+			return $retval;
+		}
+
+		// Refused early so the caller gets false before any lookup work. The real guarantee is in
+		// copy_to_media_library(), which is the sink that actually publishes the file.
+		if ( ! self::current_user_can_attach_image( $image ) ) {
+			return $retval;
+		}
+
+		if ( $postId ) {
 			$attachment_id = $this->is_in_media_library( $image->pid );
 
 			if ( $attachment_id === false ) {

@@ -83,7 +83,7 @@ class LegacyImage {
 	public function __construct( $image, $displayed_gallery = null, $legacy = false ) {
 		// for clarity.
 		if ( $displayed_gallery && isset( $displayed_gallery->display_settings['number_of_columns'] ) ) {
-			$columns = $displayed_gallery->display_settings['number_of_columns'];
+			$columns = (int) $displayed_gallery->display_settings['number_of_columns'];
 		} else {
 			$columns = 0;
 		}

@@ -439,6 +439,26 @@ class I18N {
 		$allowed_tags = self::get_kses_allowed_html();
 		$content      = wp_kses( $content, $allowed_tags, array( 'http', 'https', 'mailto' ) );
 
+		// wp_kses() normalizes a bare "&" to "&amp;" and a stray ">" to "&gt;", which the encode below
+		// would encode a second time, so "A & B" was stored as "A &amp;amp; B" (#1180). Undo that in
+		// text only; tags keep kses's form, which is the valid HTML their attributes need. The encode
+		// below must keep double-encoding: an entity rebuilt after the decode above (the backtick
+		// strip turns "&l`t;" into "&lt;") would otherwise come back as a live "<" when rendered.
+		$parts = preg_split( '/(<[^>]*>)/', $content, -1, PREG_SPLIT_DELIM_CAPTURE );
+		foreach ( $parts as $index => $part ) {
+			// Odd indexes hold the captured tags.
+			if ( 0 === $index % 2 ) {
+				$parts[ $index ] = strtr(
+					$part,
+					[
+						'&amp;' => '&',
+						'&gt;'  => '>',
+					]
+				);
+			}
+		}
+		$content = implode( '', $parts );
+
 		// Clean up the content by re-encoding HTML entities, this ensures that no malicious code is stored in db.
 		$content = htmlspecialchars( $content, ENT_QUOTES, 'UTF-8' );
 

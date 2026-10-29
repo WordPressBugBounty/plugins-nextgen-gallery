@@ -205,6 +205,7 @@ class Album extends TableDriver {
 		$this->set_default_value( $entity, 'name', '' );
 		$this->set_default_value( $entity, 'albumdesc', '' );
 		$this->set_default_value( $entity, 'sortorder', [] );
+		$this->set_default_value( $entity, 'pageid', 0 );
 		$this->set_default_value( $entity, 'previewpic', 0 );
 		$this->set_default_value( $entity, 'exclude', 0 );
 

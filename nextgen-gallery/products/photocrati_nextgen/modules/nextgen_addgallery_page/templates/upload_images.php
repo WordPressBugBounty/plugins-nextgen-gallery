@@ -166,7 +166,10 @@
 						uppy.reset();
 					}, 2000);
 
-					const gallery_url = '<?php echo esc_js( admin_url( '/admin.php?page=nggallery-manage-gallery&mode=edit&gid=' ) ); ?>' + gallery_select.value;
+					// Not esc_js(): it encodes the '&' separators as '&amp;', and Toastify assigns
+					// `destination` straight to window.open() with nothing to decode them again, so
+					// the server read the query keys as 'amp;mode' and 'amp;gid'. See #1158.
+					const gallery_url = <?php echo wp_json_encode( admin_url( '/admin.php?page=nggallery-manage-gallery&mode=edit&gid=' ) ); ?> + gallery_select.value;
 					const chosen_name = String(gallery_select.selectedOptions[0].dataset.originalValue);
 
 					let upload_count = result.successful.length;

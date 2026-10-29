@@ -132,6 +132,29 @@
 				SPAN: ['class', 'id']
 			};
 
+			// SECURITY (#1089): a caption's own href/src must be parsed, not trusted. The
+			// allow-list above keeps <a href>, but nothing here scheme-checked it, so a
+			// caption "<a href='javascript:...'>" survived. Parse with new URL() (which
+			// normalises tab/space/case so "java\tscript:"/"JavaScript:" resolve to their
+			// real scheme) and admit only http/https or mailto. An image (sameOrigin) must
+			// also be same-origin, so it cannot trigger a per-viewer off-origin request; a
+			// link may point anywhere over http/https, as caption links always could.
+			function isSafeUrl(value, sameOrigin) {
+				try {
+					var u = new URL(value, document.baseURI);
+					var scheme = u.protocol.toLowerCase();
+					if (scheme === 'mailto:') {
+						return true;
+					}
+					if (scheme === 'http:' || scheme === 'https:') {
+						return !sameOrigin || u.origin === window.location.origin;
+					}
+					return false;
+				} catch (e) {
+					return false;
+				}
+			}
+
 			function sanitizeTitle(title) {
 				const parser = new DOMParser();
 				const doc = parser.parseFromString(title, 'text/html');
@@ -143,6 +166,11 @@
 					} else {
 						[...el.attributes].forEach(attr => {
 							if (!allowedTags[el.tagName].includes(attr.name)) {
+								el.removeAttribute(attr.name);
+							} else if (
+								(attr.name === 'href' || attr.name === 'src') &&
+								!isSafeUrl(attr.value, attr.name === 'src')
+							) {
 								el.removeAttribute(attr.name);
 							}
 						});

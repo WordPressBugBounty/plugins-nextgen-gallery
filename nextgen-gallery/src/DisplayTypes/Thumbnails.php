@@ -83,6 +83,10 @@ class Thumbnails extends ParentController {
 		}
 		$display_settings['number_of_columns'] = $number_of_columns;
 
+		// LegacyImage and prepare_legacy_parameters() read the shared settings, not this copy.
+		$displayed_gallery->display_settings['images_per_page']   = $images_per_page;
+		$displayed_gallery->display_settings['number_of_columns'] = $number_of_columns;
+
 		if ( ! $display_settings['disable_pagination'] ) {
 			$current_page = (int) $router->get_parameter( 'nggpage', $gallery_id, 1 );
 		} else {

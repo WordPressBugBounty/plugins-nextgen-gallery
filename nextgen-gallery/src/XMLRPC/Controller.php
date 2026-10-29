@@ -769,10 +769,15 @@ class Controller {
 
 		// Authenticate the user.
 		if ( $this->_login( $username, $password, $blog_id ) ) {
-			if ( current_user_can( 'edit_post', $post_ID ) ) {
-				$retval = StorageManager::get_instance()->set_post_thumbnail( $post_ID, $image_id );
-			} else {
+			// Both checks, matching nggPostThumbnail::ajax_set_post_thumbnail(). edit_post covers
+			// the post this is being set on; 'NextGEN Attach Interface' covers the other object in
+			// play, the NextGEN image, whose file this copies into the uploads tree and publishes
+			// at a public URL. The gallery behind that image is authorized in the sink itself.
+			if ( ! current_user_can( 'edit_post', $post_ID )
+				|| ! Security::is_allowed( 'NextGEN Attach Interface' ) ) {
 				$retval = new \IXR_Error( 403, 'Sorry but you need permission to do this' );
+			} else {
+				$retval = StorageManager::get_instance()->set_post_thumbnail( $post_ID, $image_id );
 			}
 		}
 

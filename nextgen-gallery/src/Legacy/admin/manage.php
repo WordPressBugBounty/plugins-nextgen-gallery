@@ -120,6 +120,19 @@ class nggManageGallery {
 
 		switch ( $this->mode ) {
 			case 'sort':
+				// nggallery_sortorder() verifies the 'ngg_updatesortorder' nonce but never
+				// resolved the owner of the gallery it was handed, so the sort screen - and its
+				// write - was reachable for any gallery id by any holder of
+				// 'NextGEN Manage gallery'. Gated only when there is gallery context, matching
+				// post_processor_images(): with no gid there is no author, so
+				// can_user_manage_gallery() would answer on the cross-author capability alone
+				// and deny every owner-only caller. Nothing is left reachable by that, because
+				// nggallery_sortorder() returns on gid 0 before its own check_admin_referer()
+				// and before the UPDATE. See issue #1093 (audit #7.7).
+				if ( (int) $this->gid && ! $this->can_user_manage_gallery() ) {
+					nggGallery::show_error( __( 'Sorry, you have no access here.', 'nggallery' ) );
+					break;
+				}
 				include_once __DIR__ . '/manage-sort.php';
 				nggallery_sortorder( $this->gid );
 				break;

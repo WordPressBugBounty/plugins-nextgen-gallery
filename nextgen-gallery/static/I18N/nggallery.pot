@@ -6203,7 +6203,7 @@ msgstr ""
 #: adminApp/build/index.js:49
 #: static/IGW/Block/build/block-imagely-block.js:49
 #: static/IGW/Block/build/post-thumbnail.js:49
-msgid "Include print lab options in your Pricelist"
+msgid "Sell high-resolution digital image downloads"
 msgstr ""
 
 #: adminApp/build/index.js:84
@@ -6224,7 +6224,7 @@ msgstr ""
 #: adminApp/build/index.js:87
 #: static/IGW/Block/build/block-imagely-block.js:87
 #: static/IGW/Block/build/post-thumbnail.js:87
-msgid "Select an option from the following to add pricelist"
+msgid "Select an option below to add a product to this pricelist."
 msgstr ""
 
 #: adminApp/build/index.js:32

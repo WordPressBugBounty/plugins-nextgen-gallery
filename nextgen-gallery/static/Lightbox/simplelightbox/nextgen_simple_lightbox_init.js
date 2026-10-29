@@ -12,7 +12,7 @@ jQuery(function ($) {
 		strong: [],
 		p: [],
 		br: [],
-		span: ['class', 'id', 'style'],
+		span: ['class'],
 		img: ['src', 'alt', 'title'],
 		h1: [],
 		h2: [],
@@ -25,14 +25,42 @@ jQuery(function ($) {
 		li: []
 	};
 
+	// SECURITY (#1089): decide href/src safety by PARSING the URL, not by prefix-matching
+	// the string. new URL() applies the same whitespace, control-character and case
+	// normalisation the navigation sink does, so "java\tscript:", "JavaScript:" and a
+	// leading-space variant all resolve to the javascript: scheme and are rejected here,
+	// as are data: URLs. An image (sameOrigin) must also be same-origin, so an
+	// off-origin "//evil.example/x" cannot auto-load a per-viewer request; a link may
+	// point anywhere over http/https, as caption links always could. mailto has no
+	// origin and is allowed.
+	var isSafeUrl = function (value, sameOrigin) {
+		try {
+			var u = new URL(value, document.baseURI);
+			var scheme = u.protocol.toLowerCase();
+			if (scheme === 'mailto:') {
+				return true;
+			}
+			if (scheme === 'http:' || scheme === 'https:') {
+				return !sameOrigin || u.origin === window.location.origin;
+			}
+			return false;
+		} catch (e) {
+			return false;
+		}
+	};
+
 	// Function to sanitize HTML, allowing only certain tags and attributes.
 	var sanitizeHTML = function (str) {
-		// Create a temporary DOM element to parse the HTML string.
-		var tempDiv = document.createElement('div');
-		tempDiv.innerHTML = str;
+		// SECURITY (#1089): parse inertly. Assigning innerHTML on an element of the live
+		// document starts media loads (and their onerror handlers) before anything is
+		// removed; a DOMParser document runs no scripts or handlers and loads nothing.
+		// Stored captions can carry escaping backslashes (81b7ba777 stripped them for
+		// display). Strip them HERE, before the allow-list, so "java\script:" is seen as
+		// "javascript:" and rejected below; never after filtering (see the return).
+		var doc = new DOMParser().parseFromString(String(str).replace(/\\/g, ''), 'text/html');
 
 		// Iterate through all elements.
-		var elements = tempDiv.querySelectorAll('*');
+		var elements = doc.body.querySelectorAll('*');
 		elements.forEach(function (el) {
 			var tagName = el.tagName.toLowerCase();
 
@@ -56,7 +84,9 @@ jQuery(function ($) {
 				}
 
 				// Additional checks to sanitize certain attributes like href, src.
-				if (['href', 'src'].includes(attrName) && attrValue.startsWith('javascript:')) {
+				// Parse-based, not prefix-based: rejects javascript:/data:, tab/space/case
+				// variants, and off-origin images (see isSafeUrl).
+				if (['href', 'src'].includes(attrName) && !isSafeUrl(attrValue, attrName === 'src')) {
 					el.removeAttribute(attrName); // Remove dangerous URLs.
 				}
 
@@ -68,8 +98,12 @@ jQuery(function ($) {
 		});
 
 		// Return the sanitized HTML as a string.
-		var sanitizedText = tempDiv.innerHTML;
-		return sanitizedText.replace(/\\/g, '');
+		// SECURITY (#1089): do NOT strip backslashes here (they are stripped before parsing,
+		// above). The previous
+		// `replace(/\\/g, '')` ran AFTER the allow-list and repaired "java\script:" back
+		// into a live javascript: scheme. Any unescaping must happen before filtering,
+		// never after.
+		return doc.body.innerHTML;
 	};
 
 	// Helper function to sanitize the content of the title attribute.

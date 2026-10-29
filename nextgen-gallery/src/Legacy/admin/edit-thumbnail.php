@@ -35,6 +35,14 @@ global $wpdb;
 
 $id = (int) $_GET['id'];
 
+// The capability and nonce above are not object-level controls: without this, any holder of
+// 'NextGEN Manage gallery' could open the thumbnail cropper - and so the stored path and pixel
+// geometry - for any image id on the site. Resolve the parent gallery's owner, as the REST
+// equivalent does. See issue #1093 (audit #7.7).
+if ( true !== \Imagely\NGG\REST\DataMappers\ImageREST::current_user_can_manage_image( $id ) ) {
+	die( esc_html__( 'Permission denied', 'nggallery' ) );
+}
+
 // let's get the image data.
 $picture = nggdb::find_image( $id );
 

@@ -55,6 +55,42 @@ function tb_click() {
 	return false;
 }
 
+// SECURITY (#1089): a caption's own href/src must be parsed, not trusted. new URL()
+// normalises tab/space/case, so "java\tscript:" and "JavaScript:" resolve to their real
+// scheme; only http/https or mailto is admitted. An image (sameOrigin) must also be
+// same-origin, so it cannot trigger a per-viewer off-origin request; a link may point
+// anywhere over http/https, as caption links always could.
+function tbIsSafeUrl(value, sameOrigin) {
+	try {
+		var u = new URL(value, document.baseURI);
+		var scheme = u.protocol.toLowerCase();
+		if (scheme === 'mailto:') {
+			return true;
+		}
+		if (scheme === 'http:' || scheme === 'https:') {
+			return !sameOrigin || u.origin === window.location.origin;
+		}
+		return false;
+	} catch (e) {
+		return false;
+	}
+}
+
+// SECURITY (#1089): URLs are concatenated into single-quoted attributes below, and a
+// link's .href keeps a literal "'" (URL serialisation does not percent-encode it), so
+// "x.png?'onload='…" broke out of src='…'. Entity-encode before concatenating; the
+// browser decodes it, so the URL that loads is unchanged. "&" is deliberately left
+// alone: on first open tb_click() has already run the href through
+// sanitizeAllowedHTML(), which serialises "&" as "&amp;", and encoding it again would
+// load a literal "&amp;" in the query string.
+function tbEscAttr(value) {
+	return String(value == null ? '' : value)
+		.replace(/'/g, '&#39;')
+		.replace(/"/g, '&quot;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
 function sanitizeAllowedHTML(value) {
 	// Define allowed HTML tags and attributes similar to wp_kses
 	const allowedTags = {
@@ -66,11 +102,12 @@ function sanitizeAllowedHTML(value) {
 		strong: [],
 		p: [],
 		br: [],
-		span: ['class', 'id', 'style'],
+		// SECURITY (#1089): no 'style' — an unfiltered style let a caption overlay the page.
+		span: ['class', 'id'],
 		img: ['src', 'alt', 'title'],
 		h1: [],
 		h2: [],
-		h4: [],
+		h3: [],
 		h4: [],
 		h5: [],
 		h6: [],
@@ -80,21 +117,32 @@ function sanitizeAllowedHTML(value) {
 		blockquote: []
 	};
 
-	// Use a temporary DOM element to parse and sanitize the input
-	const tempDiv = document.createElement('div');
-	tempDiv.innerHTML = value;
+	if (value == null || value === '') {
+		return '';
+	}
+
+	// SECURITY (#1089): parse inertly. Assigning innerHTML on an element of the live
+	// document starts image loads (and their onerror handlers) before anything is
+	// removed; a DOMParser document runs no scripts or handlers and loads nothing.
+	const doc = new DOMParser().parseFromString(String(value), 'text/html');
 
 	// Recursively sanitize child nodes
 	function sanitizeNode(node) {
 		if (node.nodeType === Node.ELEMENT_NODE) {
-			if (!allowedTags[node.tagName.toLowerCase()]) {
+			const tag = node.tagName.toLowerCase();
+			if (!allowedTags[tag]) {
 				node.remove();
 				return;
 			}
 
-			// Remove disallowed attributes
+			// Remove disallowed attributes, and any href/src that is not a safe URL.
 			[...node.attributes].forEach(attr => {
-				if (!allowedTags[node.tagName.toLowerCase()].includes(attr.name)) {
+				if (!allowedTags[tag].includes(attr.name)) {
+					node.removeAttribute(attr.name);
+				} else if (
+					(attr.name === 'href' || attr.name === 'src') &&
+					!tbIsSafeUrl(attr.value, attr.name === 'src')
+				) {
 					node.removeAttribute(attr.name);
 				}
 			});
@@ -104,22 +152,24 @@ function sanitizeAllowedHTML(value) {
 		} else {
 			// Remove other node types
 			node.remove();
+			return;
 		}
 
 		// Recursively sanitize child nodes
 		[...node.childNodes].forEach(sanitizeNode);
 	}
 
-	[...tempDiv.childNodes].forEach(sanitizeNode);
+	[...doc.body.childNodes].forEach(sanitizeNode);
 
-	return tempDiv.innerHTML;
+	return doc.body.innerHTML;
 }
 
 function sanitizeToPlainText(value) {
-	// Create a temporary element to decode HTML entities and remove HTML tags.
-	const tempDiv = jQuery('<div>').html(value);
-	let plainText = tempDiv.text(); // Get plain text (decodes entities and removes tags).
-	tempDiv.remove(); // Clean up the temporary element.
+	// Decode HTML entities and remove HTML tags. SECURITY (#1089): parse inertly, as
+	// sanitizeAllowedHTML() does; a detached jQuery('<div>').html() still starts image loads
+	// and fires their onerror handlers.
+	const doc = new DOMParser().parseFromString(String(value == null ? '' : value), 'text/html');
+	let plainText = doc.body.textContent;
 
 	// Remove special characters, including quotes and backticks.
 	plainText = plainText.replace(/['"`~!@#$%^&*()_+=\[\]{}|;:,.<>?/\\-]/g, '');
@@ -167,6 +217,10 @@ function tb_show(caption, url, imageGroup) {
 		if (caption === null) {
 			caption = '';
 		}
+		// SECURITY (#1089): sanitize here, not only in tb_click(). Next/Prev re-enter
+		// tb_show() with the raw, entity-decoded title of the neighbouring link, which
+		// reached the caption HTML below unfiltered.
+		caption = sanitizeAllowedHTML(caption);
 		jQuery('body').append(
 			"<div id='TB_load'><img src='" + imgLoader.src + "' width='208' /></div>"
 		); //add loader to the page
@@ -264,7 +318,7 @@ function tb_show(caption, url, imageGroup) {
 					"<a href='' id='TB_ImageOff'><span class='screen-reader-text'>" +
 						thickboxL10n.close +
 						"</span><img id='TB_Image' src='" +
-						url +
+						tbEscAttr(url) +
 						"' width='" +
 						imageWidth +
 						"' height='" +
@@ -358,7 +412,7 @@ function tb_show(caption, url, imageGroup) {
 							"</div><div id='TB_closeAjaxWindow'><button type='button' id='TB_closeWindowButton'><span class='screen-reader-text'>" +
 							thickboxL10n.close +
 							"</span><span class='tb-close-icon'></span></button></div></div><iframe frameborder='0' hspace='0' allowtransparency='true' src='" +
-							urlNoQuery[0] +
+							tbEscAttr(urlNoQuery[0]) +
 							"' id='TB_iframeContent' name='TB_iframeContent" +
 							Math.round(Math.random() * 1000) +
 							"' onload='tb_showIframe()' style='width:" +
@@ -374,7 +428,7 @@ function tb_show(caption, url, imageGroup) {
 					jQuery('#TB_overlay').off();
 					jQuery('#TB_window').append(
 						"<iframe frameborder='0' hspace='0' allowtransparency='true' src='" +
-							urlNoQuery[0] +
+							tbEscAttr(urlNoQuery[0]) +
 							"' id='TB_iframeContent' name='TB_iframeContent" +
 							Math.round(Math.random() * 1000) +
 							"' onload='tb_showIframe()' style='width:" +

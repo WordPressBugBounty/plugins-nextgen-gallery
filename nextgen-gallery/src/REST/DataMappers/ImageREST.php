@@ -1298,6 +1298,28 @@ class ImageREST {
 
 		foreach ( $attachment_ids as $id ) {
 			try {
+				// Each id is an object reference from the request, so it needs an object-level
+				// check of its own. check_edit_permission() authorized the *destination* - the
+				// gallery these bytes land in - and says nothing about the attachment they are
+				// read from, so without this a caller who may manage one gallery can read any
+				// file in the media library, including attachments on other users' private and
+				// draft posts, and have it republished at a public URL inside that gallery.
+				//
+				// Reported by id rather than by name: attachment_display_name() resolves the
+				// basename through get_attached_file(), which answers for an attachment this
+				// caller may not read, so naming the file here would leak the very thing the
+				// check just refused. The *reason* leaks nothing and is included, otherwise this
+				// reads to an admin as "those files are corrupt" rather than "those files are not
+				// yours" - a different support ticket and a different user action.
+				if ( ! Security::can_read_attachment( $id ) ) {
+					$skipped[] = sprintf(
+						/* translators: %d: attachment ID. */
+						__( '#%d (you do not have permission to import this file)', 'nggallery' ),
+						(int) $id
+					);
+					continue;
+				}
+
 				// Import the attached file: for a downscaled upload that is the smaller
 				// derivative, which keeps thumbnail generation within reach of a modest
 				// memory limit. The untouched original is promoted into the backup below.

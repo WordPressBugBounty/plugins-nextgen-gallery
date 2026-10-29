@@ -663,7 +663,7 @@ class Controller {
 
 		foreach ( $picture_list as &$image ) {
 			if ( isset( $image->hidden ) && $image->hidden ) {
-				$tmp          = $displayed_gallery->display_settings['number_of_columns'];
+				$tmp          = (int) $displayed_gallery->display_settings['number_of_columns'];
 				$image->style = ( $tmp > 0 ) ? 'style="width:' . floor( 100 / $tmp ) . '%;display: none;"' : 'style="display: none;"';
 			}
 		}
@@ -994,5 +994,30 @@ class Controller {
 
 	public function get_default_settings() {
 		return [];
+	}
+
+	/**
+	 * Casts settings used in arithmetic to non-negative ints. Shortcode attributes and cleared
+	 * admin fields arrive as strings; a leading number is kept, anything else uses the default.
+	 *
+	 * @param DisplayedGallery $displayed_gallery Displayed gallery.
+	 * @param string[]         $keys              Setting keys to cast.
+	 */
+	public function cast_numeric_settings( $displayed_gallery, array $keys ) {
+		$defaults = $this->get_default_settings();
+		$settings = (array) $displayed_gallery->display_settings;
+
+		foreach ( $keys as $key ) {
+			$fallback = $defaults[ $key ] ?? 0;
+			$value    = isset( $settings[ $key ] ) && is_scalar( $settings[ $key ] ) ? $settings[ $key ] : $fallback;
+
+			if ( is_string( $value ) && ! is_numeric( $value ) ) {
+				$value = preg_match( '/\A\s*[+-]?\d+/', $value, $matches ) ? $matches[0] : $fallback;
+			}
+
+			$settings[ $key ] = max( 0, (int) $value );
+		}
+
+		$displayed_gallery->display_settings = $settings;
 	}
 }

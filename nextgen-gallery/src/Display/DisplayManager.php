@@ -291,10 +291,13 @@ class DisplayManager {
 				}
 			}
 
-			// Ensure ecommerce is enabled when set on the gallery record
-			if ( ! empty( $gallery->is_ecommerce_enabled ) ) {
-				$display_params['is_ecommerce_enabled'] = 1;
-			}
+			// The gallery column is authoritative for a gallery addressed by its ID. eCommerce is a
+			// gallery-level column in the new admin - the display type's "Customize" tab has no
+			// eCommerce control - so write both directions. Without the explicit 0 a display type
+			// whose defaults turn eCommerce on (Pro Tile ships 'is_ecommerce_enabled' => '1') wins
+			// the merge in DisplayedGallery::merge_display_settings() and keeps the cart on a
+			// gallery whose own toggle is off (#858).
+			$display_params['is_ecommerce_enabled'] = empty( $gallery->is_ecommerce_enabled ) ? 0 : 1;
 
 			// Set the gallery source
 			$display_params['source']        = 'galleries';
@@ -1002,10 +1005,9 @@ class DisplayManager {
 			}
 		}
 
-		// Ensure ecommerce is enabled when set on the gallery record
-		if ( ! empty( $gallery->is_ecommerce_enabled ) ) {
-			$display_params['is_ecommerce_enabled'] = 1;
-		}
+		// The gallery column is authoritative for a gallery addressed by its ID - see the identical
+		// write in convert_imagely_params() for why the 0 has to be explicit (#858).
+		$display_params['is_ecommerce_enabled'] = empty( $gallery->is_ecommerce_enabled ) ? 0 : 1;
 
 		// Set the gallery source
 		$display_params['source']        = 'galleries';

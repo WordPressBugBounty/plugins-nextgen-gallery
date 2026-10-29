@@ -2,7 +2,7 @@
 Contributors: photocrati, imagely
 Tags: gallery, wordpress gallery plugin, photo gallery, image gallery, slideshow
 Requires at least: 5.5.4
-Stable tag: 4.5.4
+Stable tag: 4.5.5
 Tested up to: 7.1
 License: GPLv3
 Requires PHP: 7.4
@@ -196,6 +196,25 @@ For more information, feel free to visit the official website for the NextGEN Ga
 
 
 == Changelog ==
+
+= 4.5.5 - 10.29.2026 =
+* Fixed: Security hardening on the Shutter and Shutter Reloaded lightboxes, so a link title, such as one inside a visitor's comment, is shown as text instead of being run as code (CVE-2026-116563). We recommend updating.
+* Fixed: Security hardening on lightbox captions, so caption text can no longer run scripts, inject its own styling or make the visitor's browser load content from another site, in any of the three lightbox effects. We recommend updating.
+* Fixed: Security hardening on the legacy gallery screens and image operations (rotate, resize, watermark, thumbnail and metadata import), which now check both the user's NextGEN permissions and their access to that specific gallery. A user whose "Manage gallery" permission has been removed can no longer edit images in galleries they created. We recommend updating.
+* Fixed: Security hardening on media library imports, gallery conversion and featured images, so a user can only import into, convert or use images from galleries they are allowed to manage. We recommend updating.
+* Fixed: Security hardening on album pages, so the gallery named in an album's address can only be one of the galleries in that album. We recommend updating.
+* Fixed: Security hardening on licence keys, so the NextGEN Pro licence key is no longer sent to the block editor or the admin app for users who cannot manage it. We recommend updating.
+* Fixed: A gallery shortcode missing its closing bracket could make the page scan the rest of the post without limit, slowing or stalling it.
+* Fixed: A non-numeric value for a size or spacing setting, in a gallery shortcode or left empty in the display settings, caused a server error on the page.
+* Fixed: Saving an existing gallery said it was "created successfully" instead of "updated".
+* Fixed: A saved order on the legacy Sort Gallery screen showed the old order until the cache expired, and the next save could submit it again.
+* Fixed: The "Manage gallery" link in the notice after an upload now opens the gallery you uploaded to instead of the galleries list.
+* Fixed: The legacy Manage Gallery screen saved `&` in alt text and descriptions as `&amp;amp;`.
+* Fixed: The WP-CLI commands `wp ngg gallery edit --title`, `wp ngg album create` and `wp ngg gallery list_children` failed.
+* Fixed: Turning off a gallery's eCommerce setting is now respected, so NextGEN Pro no longer shows the cart for that gallery.
+* Fixed: The Add Product window in price lists described Digital Downloads incorrectly.
+* Fixed: "Activate License & Install Pro" installed NextGEN Pro but did not save the licence key.
+* Fixed: Lightroom publishing no longer logs a "post_back token did not match" refusal on every normal publish.
 
 = 4.5.4 - 10.22.2026 =
 * Fixed: PHP 8.2+ compatibility, so NextGEN no longer fills the error log with deprecation notices when it generates thumbnails, watermarks and reflections, or when it reads an image whose file is missing.

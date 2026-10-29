@@ -2004,31 +2004,15 @@ class C_Gallery_Storage extends C_Component
      */
     public function set_post_thumbnail($postId, $image, $only_create_attachment = false)
     {
-        $retval = false;
-        // Get the post ID
-        if (is_object($postId)) {
-            $post = $postId;
-            $postId = isset($post->ID) ? $post->ID : $post->post_id;
-        }
-        // Get the image
-        if (is_int($image)) {
-            $imageId = $image;
-            $mapper = C_Image_Mapper::get_instance();
-            $image = $mapper->find($imageId);
-        }
-        if ($image && $postId) {
-            $attachment_id = $this->object->is_in_media_library($image->pid);
-            if ($attachment_id === false) {
-                $attachment_id = $this->object->copy_to_media_library($image);
-            }
-            if ($attachment_id) {
-                if (!$only_create_attachment) {
-                    set_post_thumbnail($postId, $attachment_id);
-                }
-                $retval = $attachment_id;
-            }
-        }
-        return $retval;
+        // Delegates rather than reimplementing. This used to be a standalone copy of
+        // Manager::set_post_thumbnail(), reaching is_in_media_library()/copy_to_media_library()
+        // through the POPE adapter, so it copied a NextGEN image into the uploads tree and
+        // published it at a public URL with no capability or ownership test. Hardening the real
+        // sink did nothing for it, which defeated the point of putting the check in the sink.
+        //
+        // This shim is @deprecated and exists for third-party code that still calls
+        // C_Gallery_Storage; that code must not be a way around the gate.
+        return \Imagely\NGG\DataStorage\Manager::get_instance()->set_post_thumbnail($postId, $image, $only_create_attachment);
     }
     public function convert_slashes($path)
     {
@@ -3605,42 +3589,12 @@ class C_Gallery_Storage extends C_Component
      */
     public function copy_to_media_library($image)
     {
-        $retval = false;
-        // Get the image
-        if (is_int($image)) {
-            $imageId = $image;
-            $mapper = C_Image_Mapper::get_instance();
-            $image = $mapper->find($imageId);
-        }
-        if ($image) {
-            $subdir = apply_filters('ngg_import_to_media_library_subdir', 'nggallery_import');
-            $wordpress_upload_dir = wp_upload_dir();
-            $path = $wordpress_upload_dir['path'] . DIRECTORY_SEPARATOR . $subdir;
-            if (!file_exists($path)) {
-                wp_mkdir_p($path);
-            }
-            $image_abspath = self::get_instance()->get_image_abspath($image, 'full');
-            $new_file_path = $path . DIRECTORY_SEPARATOR . $image->filename;
-            $image_data = getimagesize($image_abspath);
-            $new_file_mime = $image_data['mime'];
-            $i = 1;
-            while (file_exists($new_file_path)) {
-                ++$i;
-                $new_file_path = $path . DIRECTORY_SEPARATOR . $i . '-' . $image->filename;
-            }
-            // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-            if (@copy($image_abspath, $new_file_path)) {
-                $upload_id = wp_insert_attachment(['guid' => $new_file_path, 'post_mime_type' => $new_file_mime, 'post_title' => preg_replace('/\\.[^.]+$/', '', $image->alttext), 'post_content' => '', 'post_status' => 'inherit'], $new_file_path);
-                update_post_meta($upload_id, '_ngg_image_id', intval($image->pid));
-                // wp_generate_attachment_metadata() comes from this file
-                require_once ABSPATH . 'wp-admin/includes/image.php';
-                $image_meta = wp_generate_attachment_metadata($upload_id, $new_file_path);
-                // Generate and save the attachment metas into the database
-                wp_update_attachment_metadata($upload_id, $image_meta);
-                $retval = $upload_id;
-            }
-        }
-        return $retval;
+        // Delegates rather than reimplementing. This was a standalone copy of
+        // Manager::copy_to_media_library() reached through the POPE adapter, so it copied a
+        // NextGEN image into wp-content/uploads and gave it an attachment row - publishing it at a
+        // public URL - with no capability or ownership test. Gating only the real sink left this
+        // shim as a way around the gate for any third-party caller.
+        return \Imagely\NGG\DataStorage\Manager::get_instance()->copy_to_media_library($image);
     }
     /**
      * Delete the given NGG image from the media library

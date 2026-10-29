@@ -87,30 +87,40 @@ class App {
 		 * eCommerce menu: Pro opens the full hub; Lite opens a static Pro-upsell page (the
 		 * React app renders the right one).
 		 *
-		 * manage_options for both tiers. The hub's own REST routes - the order, coupon,
-		 * pricelist and pricelist-item controllers in nextgen-gallery-pro, and
-		 * Commerce\REST\Admin, which already required it - gate on manage_options, because
-		 * "NextGEN Change options" is delegable to any role from the Roles screen below and
-		 * so cannot govern the payment ledger, its customer PII, or the order hashes that
-		 * the unauthenticated digital-download route accepts as proof of purchase
-		 * (nextgen-gallery-pro#815). Registering the menu at the delegable capability while
-		 * the routes require manage_options would leave a delegated role looking at a hub
-		 * whose every request 403s, so the two have to state the same thing.
+		 * manage_options for both tiers, because the hub's own REST routes require it:
+		 * "NextGEN Change options" is delegable to any role from the Roles screen below, so it
+		 * cannot govern the payment ledger, its customer PII, or the order hashes the
+		 * unauthenticated digital-download route takes as proof of purchase
+		 * (nextgen-gallery-pro#815). A menu at the delegable capability over routes needing
+		 * manage_options would 403 on every request.
 		 *
-		 * This aligns the menu with the commerce *data* routes, and no further. The hub's
-		 * Payment Setup tab saves through GET/PUT /imagely/v1/settings, and
-		 * REST\DataMappers\SettingsREST::check_read_permission()/check_edit_permission()
-		 * still resolve to "NextGEN Change options" alone, with get_settings() returning
-		 * Settings::to_array() unredacted - so a delegated role can still read
-		 * ecommerce_stripe_key_private and rewrite ecommerce_paypal_email even with this
-		 * menu hidden. That is pre-existing, is not what #815 scoped, and is tracked as
-		 * nextgen-gallery-pro#838 (the write half of the same exposure is
-		 * nextgen-gallery-pro#816); do not read this comment as saying the whole hub is
-		 * now administrator-only.
+		 * The settings route is deliberately NOT part of that: SettingsREST still resolves both
+		 * callbacks to "NextGEN Change options" and returns Settings::to_array() whole, because
+		 * the Settings screen below is registered at that capability and serves a delegated role
+		 * for every non-commerce option. What it no longer returns to such a caller is the
+		 * gateway credentials, both licence-key spellings and the print-lab billing customer:
+		 * nextgen-gallery-pro#838 redacts them on rest_request_after_callbacks and refuses a
+		 * write carrying one on rest_pre_dispatch, for /imagely/v1/settings and /settings/global.
+		 *
+		 * Those two routes only. Still open, and none of it administrator-only:
+		 * - The classic eCommerce form mass-assigns every posted ecommerce[*] key at the
+		 *   delegable capability, so that screen can still CHANGE the credentials
+		 *   (nextgen-gallery-pro#816). Reading them back from it is closed by #838.
+		 * - get_license_data() below checks no capability, and get_imagely_app_data() is
+		 *   localized by TWO callers: this file's hub pages, and IGW\BlockManager, whose
+		 *   register_blocks() puts it on the block editor script that core enqueues for any
+		 *   edit_posts user. So a Contributor reads the key from post-new.php, and the fix has
+		 *   to land in get_license_data() itself - gating this file would leave that route
+		 *   open (#1161).
+		 * - Free's Other Options forms save the posted array whole into the same row, so that
+		 *   screen can still write any key, gateway credentials included (#1174).
+		 * - Pro prints the licence key into the Other Options markup at the same delegable
+		 *   capability, a separate route from #1161 (nextgen-gallery-pro#867).
+		 * - The gate ships in Pro, so without Pro the stored values are readable again (#1163).
 		 *
 		 * This is also where both halves sat before faa02189 moved the whole menu off
-		 * manage_options; the gallery, album, tag and style delegations that commit
-		 * introduced are deliberate and stay as they are.
+		 * manage_options; the gallery, album, tag and style delegations that commit introduced
+		 * are deliberate and stay as they are.
 		 */
 		$sub_menus[] = [
 			'name'       => __( 'eCommerce', 'nggallery' ),
@@ -394,7 +404,12 @@ HTML;
 			$license_key     = $licensing->get_license( $current_product );
 
 			if ( ! empty( $license_key ) ) {
-				$license_data['license_key'] = $license_key;
+				// This data is printed on the block editor and on hub pages a delegated role can
+				// open, so only a user who may manage the license gets the full key. Newer Pro
+				// masks it as well; this also covers an older Pro running with this version.
+				$license_data['license_key'] = self::can_access_license_settings()
+					? $license_key
+					: self::mask_license_key( $license_key );
 
 				// Get plugin level
 				$license_data['plugin_level'] = $pro_type;
@@ -439,6 +454,22 @@ HTML;
 		}
 
 		return $license_data;
+	}
+
+	/**
+	 * Mask a license key down to its last four characters.
+	 *
+	 * The app only checks that a key is present and displays its last four characters, so both
+	 * still work. Masking an already masked key returns it unchanged.
+	 *
+	 * @param string $license_key License key.
+	 * @return string
+	 */
+	public static function mask_license_key( $license_key ) {
+		$license_key = (string) $license_key;
+		$shown       = strlen( $license_key ) > 4 ? substr( $license_key, -4 ) : '';
+
+		return str_repeat( '*', strlen( $license_key ) - strlen( $shown ) ) . $shown;
 	}
 
 	/**

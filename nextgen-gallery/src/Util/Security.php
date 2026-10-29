@@ -430,4 +430,49 @@ class Security {
 
 		return $current_user_id === $author_id;
 	}
+
+	/**
+	 * Whether the current user may read a given media-library attachment.
+	 *
+	 * The import and conversion paths take attachment ids from the request - directly, or out of
+	 * a post whose id the request names - and hand each one to get_attached_file() before reading
+	 * the bytes off disk. The capability that opens those routes authorizes the *destination*
+	 * gallery; nothing on them asks whose file is being read, so the object-level question has to
+	 * be asked here.
+	 *
+	 * Two tests, because each answers a different question:
+	 *
+	 * - `edit_post`, not `read_post`. `read_post` is useless as a gate here: core's
+	 *   get_post_status() reports `publish` for an attachment with no `post_parent` ("unattached
+	 *   attachments are considered publicly accessible"), and map_meta_cap() resolves read_post on
+	 *   a public-status post down to plain `read`, which every logged-in role holds - so a
+	 *   Subscriber passes for any unattached upload, and most of a real media library is
+	 *   unattached. `edit_post` resolves through the attachment's own author and
+	 *   `edit_others_posts`, so an author keeps their own media and nobody reaches anyone else's.
+	 *   This is also what the same bug settled on in the sibling plugin
+	 *   (envira-gallery-plugin#5639), and importing is a write-shaped act anyway: the bytes are
+	 *   copied out and republished at a new public URL.
+	 * - the post-type test narrows the id space to real attachment rows, which is what stops an
+	 *   arbitrary post id being used as a file reference: get_attached_file() reads
+	 *   `_wp_attached_file` from **any** post id. It bounds the *object*, not the path - an
+	 *   absolute stored value is returned verbatim and the `get_attached_file` filter may rewrite
+	 *   it, so offloaded-media and migrated rows can still resolve outside the uploads tree.
+	 *   Callers needing path containment have to assert it separately.
+	 *
+	 * @param int|string $attachment_id Attachment id, as supplied by the request.
+	 * @return bool
+	 */
+	public static function can_read_attachment( $attachment_id ) {
+		$attachment_id = (int) $attachment_id;
+
+		if ( $attachment_id <= 0 ) {
+			return false;
+		}
+
+		if ( 'attachment' !== \get_post_type( $attachment_id ) ) {
+			return false;
+		}
+
+		return \current_user_can( 'edit_post', $attachment_id );
+	}
 }

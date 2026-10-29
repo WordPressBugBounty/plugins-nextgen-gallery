@@ -93,6 +93,13 @@ class SharedController extends ParentController {
 	];
 
 	/**
+	 * Settings used in arithmetic; cast before use.
+	 *
+	 * @var string[]
+	 */
+	const NUMERIC_SETTINGS = [ 'galleries_per_page', 'thumbnail_width', 'thumbnail_height' ];
+
+	/**
 	 * Cache of albums to be displayed.
 	 *
 	 * @var array
@@ -286,6 +293,8 @@ class SharedController extends ParentController {
 	 * @param DisplayedGallery $displayed_gallery DisplayedGallery object.
 	 */
 	public function enqueue_frontend_resources( $displayed_gallery ) {
+		$this->cast_numeric_settings( $displayed_gallery, self::NUMERIC_SETTINGS );
+
 		// Necessary for breadcrumbs and URL routing.
 		$renderer = Renderer::get_instance( 'inner' );
 		$renderer->do_app_rewrites( $displayed_gallery );
@@ -444,6 +453,165 @@ class SharedController extends ParentController {
 				}
 			}
 		}
+		return false;
+	}
+
+	/**
+	 * Determines whether $gallery_id is one of the galleries this album shortcode renders.
+	 *
+	 * This is the authorization decision for the ?gallery= drill-down parameter. The parameter
+	 * names an arbitrary gallery id or slug, is read on a public render path, and its value
+	 * becomes the child DisplayedGallery's container_ids - which every consumer of
+	 * 'ngg_displayed_gallery_construct' then reads. Without this check an anonymous GET renders
+	 * any gallery on the site, including ones deliberately never placed on a public page
+	 * (see awesomemotive/nextgen-gallery-pro#811).
+	 *
+	 * The basis is what the shortcode actually renders as tiles, not the raw album sortorder,
+	 * because the two differ in both directions:
+	 *
+	 * - `[album]` and `[album id=0]` arrive here with container_ids of [''] / ['0'], which
+	 *   get_entities() treats as "every gallery on the site" (DataTypes/DisplayedGallery.php)
+	 *   while get_albums() returns no albums at all for them. Deriving containment from
+	 *   get_albums() would refuse every drill-down on those shortcodes even though every
+	 *   gallery is on the page.
+	 * - `exclusions` and `entity_ids` narrow the rendered set below the sortorder. Those are
+	 *   how an owner takes a gallery back off a published album without restructuring it, so
+	 *   sortorder membership is exactly the wrong authority there.
+	 *
+	 * A sub-album tile is followed into, since clicking it is a legitimate route to the
+	 * galleries beneath it; its own children are not filtered by this shortcode's exclusions.
+	 *
+	 * @param int              $gallery_id        Numeric gallery ID requested via the URL.
+	 * @param DisplayedGallery $displayed_gallery The album displayed gallery being rendered.
+	 *
+	 * @return bool
+	 */
+	protected function is_gallery_in_displayed_albums( int $gallery_id, DisplayedGallery $displayed_gallery ): bool {
+		if ( $gallery_id < 1 ) {
+			return false;
+		}
+
+		// Only the two real sentinels mean "every gallery on the site" - those shortcodes render
+		// every gallery as its own tile, so any existing gallery is legitimately reachable and
+		// the check short-circuits to a simple existence test. An empty container_ids
+		// does NOT: get_entities() nests its sentinel test inside `if ( $container_ids )`, so a
+		// falsy value means the container query contributes nothing, and the tiles come from
+		// entity_ids instead - which is exactly what `[ngg source="albums" gallery_ids="3,5"]`
+		// produces (Renderer::params_to_displayed_gallery() routes gallery_ids into entity_ids
+		// and leaves container_ids empty for an albums source). Treating that as "all galleries"
+		// would authorize every gallery on the site for those shortcodes, which is the #811 hole
+		// itself. Falling through to the entity walk authorizes exactly the rendered tiles.
+		// ...and only when the shortcode does not narrow that set afterwards. The renderer
+		// expands the sentinel to every gallery and THEN subtracts exclusions and intersects
+		// entity_ids (DataTypes/DisplayedGallery.php: entity_ids fast path, sentinel expansion,
+		// exclusions), so `[ngg src="albums" ids="0" exclusions="7"]` shows everything except
+		// gallery 7. Short-circuiting on the sentinel alone authorized gallery 7 anyway, because
+		// it returns before $excluded is built below and never reads entity_ids. When either is
+		// present the walk below is the authority instead: it reads get_included_entities(),
+		// which has already had both applied.
+		$container_ids = (array) $displayed_gallery->container_ids;
+		if ( ( [ '0' ] === $container_ids || [ '' ] === $container_ids )
+			&& empty( $displayed_gallery->exclusions )
+			&& empty( $displayed_gallery->entity_ids ) ) {
+			return (bool) GalleryMapper::get_instance()->find( $gallery_id );
+		}
+
+		$mapper  = AlbumMapper::get_instance();
+		$visited = [];
+
+		// This shortcode's exclusions survive a drill-down into a sub-album: index_action()'s
+		// ?album= branch resets entity_ids, sortorder and container_ids but deliberately leaves
+		// exclusions alone, so a gallery excluded here is not rendered in the sub-album view
+		// either - and must not be reachable through it.
+		$excluded = array_map( 'intval', (array) $displayed_gallery->exclusions );
+
+		foreach ( (array) $displayed_gallery->get_included_entities() as $entity ) {
+			if ( ! is_object( $entity ) || empty( $entity->id_field ) ) {
+				continue;
+			}
+
+			$is_gallery = isset( $entity->is_gallery ) && intval( $entity->is_gallery );
+			$entity_id  = (int) $entity->{$entity->id_field};
+
+			if ( $is_gallery ) {
+				if ( $entity_id === $gallery_id ) {
+					return true;
+				}
+				continue;
+			}
+
+			if ( $this->gallery_id_in_sortorder( $gallery_id, $entity, $mapper, $visited, $excluded ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Recursively checks whether $gallery_id appears in $album->sortorder or in any nested
+	 * sub-album's sortorder.
+	 *
+	 * Sub-album ids already walked are tracked in $visited so cyclic or self-referential album
+	 * trees cannot cause infinite recursion, without imposing a nesting-depth limit - the same
+	 * guard album_id_in_sortorder() uses.
+	 *
+	 * sortorder holds its entries as strings, so gallery ids are compared after an integer cast
+	 * rather than with in_array( ..., true ): a strict match against the stored '12' would never
+	 * fire. Entries beginning with 'a' are sub-albums and are recursed into, never compared.
+	 *
+	 * Sub-album rows are read through $this->breadcrumb_cache, the same per-request cache the
+	 * breadcrumb walk uses, so an album appearing in several trees is fetched once per request.
+	 *
+	 * @param int         $gallery_id Numeric gallery ID to look for.
+	 * @param object      $album      Album entity exposing a sortorder array.
+	 * @param AlbumMapper $mapper     Album data mapper.
+	 * @param array       $visited    Sub-album IDs already visited (passed by reference).
+	 * @param array       $excluded   Gallery IDs this shortcode excludes at any depth.
+	 *
+	 * @return bool
+	 */
+	protected function gallery_id_in_sortorder( int $gallery_id, $album, $mapper, array &$visited, array $excluded = [] ): bool {
+		if ( empty( $album->sortorder ) || ! is_array( $album->sortorder ) ) {
+			return false;
+		}
+
+		// An excluded gallery is not rendered by this shortcode at any depth, so no amount of
+		// sortorder membership makes it reachable.
+		if ( in_array( $gallery_id, $excluded, true ) ) {
+			return false;
+		}
+
+		foreach ( $album->sortorder as $item ) {
+			if ( is_string( $item ) && strpos( $item, 'a' ) === 0 ) {
+				continue;
+			}
+			if ( is_numeric( $item ) && (int) $item === $gallery_id ) {
+				return true;
+			}
+		}
+
+		foreach ( $album->sortorder as $item ) {
+			if ( ! is_string( $item ) || strpos( $item, 'a' ) !== 0 || ! is_numeric( substr( $item, 1 ) ) ) {
+				continue;
+			}
+			$sub_id = (int) substr( $item, 1 );
+			if ( isset( $visited[ $sub_id ] ) ) {
+				continue;
+			}
+			$visited[ $sub_id ] = true;
+
+			$cache_key = 'a' . $sub_id;
+			if ( ! array_key_exists( $cache_key, $this->breadcrumb_cache ) ) {
+				$this->breadcrumb_cache[ $cache_key ] = $mapper->find( $sub_id );
+			}
+			$sub_album = $this->breadcrumb_cache[ $cache_key ];
+
+			if ( $sub_album && $this->gallery_id_in_sortorder( $gallery_id, $sub_album, $mapper, $visited, $excluded ) ) {
+				return true;
+			}
+		}
+
 		return false;
 	}
 
@@ -648,6 +816,32 @@ class SharedController extends ParentController {
 			}
 
 			$parent_albums = $displayed_gallery->get_albums();
+
+			// Honour ?gallery= only for a gallery this shortcode actually renders, mirroring the
+			// containment the ?album= branch of index_action() already applies. The parameter is
+			// read on a public render path and its value lands in the child's container_ids, so
+			// without this an anonymous GET renders any gallery on the site - proofing and
+			// paid-download galleries included - and every consumer of
+			// 'ngg_displayed_gallery_construct' receives the attacker's id
+			// (awesomemotive/nextgen-gallery-pro#811).
+			//
+			// An unresolved slug leaves $gallery non-numeric and casts to 0, which the helper
+			// refuses, so a bogus slug can no longer become a container id either. The cast is
+			// also what the child is built from below: authorizing (int) $gallery and then
+			// rendering the raw string would let '7abc' be approved as 7 and rendered as '7abc'.
+			$gallery = (int) $gallery;
+
+			if ( ! $this->is_gallery_in_displayed_albums( $gallery, $displayed_gallery ) ) {
+				// Memoise the refusal as well as the success below. This method mutates router
+				// state through do_app_rewrites() and runs a slug lookup and get_albums() before
+				// reaching here, and index_action() now calls it before claiming the
+				// one-gallery-per-post slot - so without this, every shortcode that refuses
+				// repeats all of that on each call. Storing the album itself keeps the identity
+				// comparison callers use ('alternate !== original' means "refused") intact.
+				self::$alternate_displayed_galleries[ $id ] = $displayed_gallery;
+
+				return $displayed_gallery;
+			}
 
 			$gallery_params = [
 				'source'                  => 'galleries',
@@ -1058,6 +1252,8 @@ class SharedController extends ParentController {
 	public function index_action( $displayed_gallery, $return_output = false ) {
 		$router = Router::get_instance();
 
+		$this->cast_numeric_settings( $displayed_gallery, self::NUMERIC_SETTINGS );
+
 		// We need to fetch the selected album containers. We need to do this, because once we fetch the included
 		// entities, we need to iterate over each entity and assign it a parent_id, which is the album that it belongs
 		// to. We need to do this because the link to the gallery, is not /nggallery/gallery--id,
@@ -1067,15 +1263,21 @@ class SharedController extends ParentController {
 		$gallery = $router->get_parameter( 'gallery' );
 		$album   = $router->get_parameter( 'album' );
 		if ( $gallery && strpos( $gallery, 'nggpage--' ) !== 0 ) {
-			// Basic albums only support one per post.
-			if ( isset( $GLOBALS['nggShowGallery'] ) ) {
-				return '';
-			}
-
-			$GLOBALS['nggShowGallery'] = true;
-
+			// Resolve the drill-down before claiming the one-gallery-per-post slot. The
+			// alternate comes back unchanged when ?gallery= names a gallery outside this
+			// shortcode's own albums (#811), and a shortcode that refuses must not consume
+			// the slot: on a page with several album shortcodes the one that legitimately
+			// contains the gallery may be reached second, and claiming the slot first would
+			// leave it rendering nothing.
 			$alternate_displayed_gallery = $this->get_alternate_displayed_gallery( $displayed_gallery );
 			if ( $alternate_displayed_gallery !== $displayed_gallery ) {
+				// Basic albums only support one per post.
+				if ( isset( $GLOBALS['nggShowGallery'] ) ) {
+					return '';
+				}
+
+				$GLOBALS['nggShowGallery'] = true;
+
 				$renderer = Renderer::get_instance( 'inner' );
 
 				// For legacy templates we just generate the description & breadcrumb string and prepend it to the generated

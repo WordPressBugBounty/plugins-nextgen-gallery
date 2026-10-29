@@ -642,6 +642,9 @@ class Onboarding_Wizard {
 
 		$product = $verification_result['level'];
 
+		// Save the key before installing, so the premium plugin finds it as soon as it loads.
+		\Imagely\NGG\Util\LicenseHelper::store_license( $license_key, $verification_result );
+
 		// Check if the product is already active
 		$current_level = \Imagely\NGG\Util\LicenseHelper::get_license_type();
 		if ( $current_level === $product ) {

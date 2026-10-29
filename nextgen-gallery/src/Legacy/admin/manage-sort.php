@@ -28,11 +28,13 @@ function nggallery_sortorder( $galleryID = 0 ) {
 		check_admin_referer( 'ngg_updatesortorder' );
 
 		// get variable new sortorder.
+		$sortArray = [];
+
 		if ( ! empty( $_POST['sortorder'] ) ) {
 			$sortArray = explode( ',', sanitize_text_field( wp_unslash( $_POST['sortorder'] ) ) );
 		}
 
-		if ( is_array( $sortArray ) ) {
+		if ( ! empty( $sortArray ) ) {
 			$neworder = [];
 
 			foreach ( $sortArray as $pid ) {
@@ -42,18 +44,28 @@ function nggallery_sortorder( $galleryID = 0 ) {
 			$sortindex = 1;
 
 			foreach ( $neworder as $pic_id ) {
+				// Scoped to $galleryID. The ids come straight from $_POST['sortorder'], so
+				// without the galleryid predicate a sort submitted against a gallery the caller
+				// owns rewrote the sortorder of any pid on the site - the gallery the handler was
+				// handed never constrained the write. See issue #1093 (audit #7.7).
+				//
 				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.DirectQuery
 				$wpdb->query(
 					$wpdb->prepare(
-						"UPDATE `{$wpdb->nggpictures}` SET `sortorder` = %s WHERE `pid` = %d",
+						"UPDATE `{$wpdb->nggpictures}` SET `sortorder` = %s WHERE `pid` = %d AND `galleryid` = %d",
 						[
 							$sortindex,
 							$pic_id,
+							$galleryID,
 						]
 					)
 				);
 				++$sortindex;
 			}
+
+			// The raw $wpdb writes above skip the mapper, so its cached result set is stale;
+			// bump the version or the read below re-renders the pre-save order.
+			\Imagely\NGG\DataMappers\Image::get_instance()->flush_query_cache();
 
 			\Imagely\NGG\Util\Transient::flush( 'displayed_gallery_rendering' );
 

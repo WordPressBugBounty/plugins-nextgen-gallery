@@ -4,6 +4,7 @@ namespace Imagely\NGG\IGW;
 
 use Imagely\NGG\DataStorage\Manager as StorageManager;
 use Imagely\NGG\Display\StaticAssets;
+use Imagely\NGG\Util\Security;
 use Imagely\NGG\Util\URL;
 
 /**
@@ -276,7 +277,35 @@ class BlockManager {
 			\delete_post_thumbnail( $post->ID );
 			$storage->delete_from_media_library( $target->ngg_post_thumbnail );
 		} else {
-			// Was it added?
+			// Was it added? Apply the two checks nggPostThumbnail::ajax_set_post_thumbnail() has
+			// always applied to this same operation. Reaching this hook only proves core let the
+			// caller save the post; the id names a NextGEN image, and setting it copies that
+			// image into the uploads tree and publishes it at a public URL, so edit_post alone is
+			// not enough - a stock Contributor would otherwise reach gallery content they have no
+			// capability for, and the endpoint doubles as an id oracle for it.
+			//
+			// The removal branch above stays ungated, as it does in the legacy handler: it only
+			// clears post meta on a post the caller may already edit.
+			if ( ! current_user_can( 'edit_post', $post->ID )
+				|| ! Security::is_allowed( 'NextGEN Attach Interface' ) ) {
+				// Logged because this is the one twin that can report nothing: the XML-RPC method
+				// returns IXR_Error and the legacy AJAX handler dies '-1', but a rest_insert_*
+				// callback returns void, so the post saves 200 and the dropped featured image is
+				// invisible to the editor. The picker script is enqueued for every block-editor
+				// user while the capability ships to administrator only, so a legitimate Editor
+				// can land here.
+				$storage->log_path_refusal(
+					sprintf(
+						'NextGEN Gallery: refused to set NextGEN image #%1$d as the featured image of post #%2$d - user #%3$d lacks edit_post or "NextGEN Attach Interface".',
+						(int) $target->ngg_post_thumbnail,
+						(int) $post->ID,
+						(int) get_current_user_id()
+					),
+					StorageManager::REFUSAL_ATTACH_IMAGE
+				);
+				return;
+			}
+
 			$storage->set_post_thumbnail( $post->ID, $target->ngg_post_thumbnail );
 		}
 	}
